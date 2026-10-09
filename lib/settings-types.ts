@@ -153,6 +153,16 @@ export type ApiConfig = {
     enableImageRecognition: boolean;
     enableImageGeneration: boolean;
     preventEmptyGenerateRambling?: boolean;
+    /** 所属文件夹 id（见 lib/api-folder-storage.ts）；空为「未分类」。 */
+    folderId?: string;
+};
+
+/** API 配置文件夹（分类收纳用）。 */
+export type ApiFolder = {
+    id: string;
+    name: string;
+    /** 排序权重，越小越靠前。 */
+    order: number;
 };
 
 // --- VoiceApiConfig (migrated from voice-settings.tsx) ---
