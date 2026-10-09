@@ -749,7 +749,7 @@ export function ApiSettings() {
                                 />
                             </div>
                             <div className="flex flex-col gap-1">
-                                <label className="menu-desc ml-1">登录账号</label>
+                                <label className="menu-desc ml-1">登录账号（令牌登录可留空）</label>
                                 <Input
                                     type="text"
                                     value={editingSite.username}
@@ -758,17 +758,17 @@ export function ApiSettings() {
                                 />
                             </div>
                             <div className="flex flex-col gap-1">
-                                <label className="menu-desc ml-1">登录密码</label>
+                                <label className="menu-desc ml-1">登录密码 / 访问令牌</label>
                                 <Input
                                     type="password"
                                     value={editingSite.password}
                                     onChange={(e) => setEditingSite({ ...editingSite, password: e.target.value })}
-                                    placeholder="站点登录密码"
+                                    placeholder="登录密码，或站点「个人设置」里的系统访问令牌"
                                 />
                             </div>
                             <Alert variant="info">
                                 <KeyRound size={16} className="mt-[2px] shrink-0" />
-                                <span className="leading-[1.5]">账密只保存在本机，查询时经本站后端直连目标站点。支持 new-api / one-api 体系的中转站。</span>
+                                <span className="leading-[1.5]">账密只保存在本机，查询时经本站后端直连目标站点。支持 new-api / one-api 体系的中转站；账密登录不通时会自动尝试访问令牌和 OpenAI 计费接口（sk- key 也可直接填在密码栏）。</span>
                             </Alert>
                         </div>
                     </div>
