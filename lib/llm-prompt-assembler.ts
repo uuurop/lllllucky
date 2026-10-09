@@ -172,7 +172,12 @@ function isImageGenerationMediaMessage(msg: ChatMessage): boolean {
 function formatPhotoDirective(msg: ChatMessage, prefix = ""): string {
     const description = msg.mediaData?.label?.trim() || "图片";
     const mode = msg.mediaData?.useReferenceImage === true ? "使用参考图" : "不使用参考图";
-    return `${prefix}[照片:${mode}:${description}]`;
+    // 用户发来的实拍图若已收入头像候选相册，附上编号，TA 喜欢可直接 [换头像:编号] 换上
+    const candidateIndex = msg.role === "user" && msg.mediaType === "image" ? msg.mediaData?.candidateIndex : undefined;
+    const candidateNote = candidateIndex
+        ? `（这张照片已收入你的头像候选相册，编号 ${candidateIndex}；如果你喜欢它，可以输出 [换头像:${candidateIndex}] 把它换成你的聊天头像）`
+        : "";
+    return `${prefix}[照片:${mode}:${description}]${candidateNote}`;
 }
 
 function formatImageGenerationDirective(msg: ChatMessage, prefix = ""): string {

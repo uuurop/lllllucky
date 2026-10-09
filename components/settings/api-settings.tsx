@@ -790,7 +790,6 @@ export function ApiSettings() {
                                 value={renamingFolderName}
                                 onChange={(e) => setRenamingFolderName(e.target.value)}
                                 placeholder="文件夹名称"
-                                autoFocus
                             />
                         </div>
                     </div>

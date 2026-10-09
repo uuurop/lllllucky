@@ -138,6 +138,7 @@ export type ChatMessage = {
         amount?: number;          // 红包/转账金额
         count?: number;           // 红包个数
         candidateIndex?: number;  // 换头像：候选相册编号（1 起）
+        hiddenInChat?: boolean;   // 不在聊天界面/会话预览/搜索中渲染，但仍进 LLM 历史（引导类系统指令用）
         label?: string;           // 红包留言/转账备注/照片描述/位置名/表情名
         status?: "pending" | "opened" | "received" | "declined" | "paid" | "canceled";  // 红包/转账/代付状态
         quoteMessageId?: string;  // 引用消息 ID
@@ -333,6 +334,7 @@ export function isSystemInstructionMessage(msg: Pick<ChatMessage, "role" | "medi
 
 export function getChatMessagePreview(msg: ChatMessage): string {
     if (isReadingDiscussMessage(msg)) return "";
+    if (msg.mediaData?.hiddenInChat) return "";
 
     const userName = (() => { try { return resolveUserIdentity()?.name; } catch { return undefined; } })();
     const toYou = (text: string) => userName ? text.replace(new RegExp(userName, "g"), "你") : text;
@@ -453,6 +455,7 @@ function hasPreviewText(text: string | undefined): boolean {
 
 function isSessionPreviewCandidate(msg: ChatMessage): boolean {
     if (isReadingDiscussMessage(msg)) return false;
+    if (msg.mediaData?.hiddenInChat) return false;
     if (msg.mediaType === "tool_result" || msg.mediaType === "tool_call") return false;
     if (msg.mediaType === "tool_notice") return false;
     if (msg.mediaType === "memory_write_request") return false;

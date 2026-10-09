@@ -253,6 +253,7 @@ function getSearchResultRole(msg: ChatMessage): SearchResultRole {
 
 function isSearchHiddenMessage(msg: ChatMessage): boolean {
     return msg.role === "tool"
+        || Boolean(msg.mediaData?.hiddenInChat)
         || msg.mediaType === "tool_call"
         || msg.mediaType === "tool_result"
         || msg.mediaType === "tool_notice"
@@ -513,7 +514,7 @@ export function ChatSettingsPanel({
                 sessionId: session.id,
                 role: "system",
                 mediaType: "avatar_change",
-                content: "你为对方更换了新头像",
+                content: "对方换上了新头像",
             });
             setAvatarTick(t => t + 1);
         } catch {
@@ -533,7 +534,7 @@ export function ChatSettingsPanel({
             sessionId: session.id,
             role: "system",
             mediaType: "avatar_change",
-            content: "你把对方的头像恢复成了默认头像",
+            content: "对方的头像恢复成了默认",
         });
         setAvatarTick(t => t + 1);
     };

@@ -84,7 +84,7 @@ import {
 } from "@/lib/chat-screen-effects";
 import { abortableDelay, throwIfAborted } from "@/lib/abort-utils";
 import { GROUP_SELF_KEY, canGroupAdminAct, applyGroupAdminAction, buildGroupAdminNoticeText, getGroupMemberDisplayName, getGroupMuteRemainingMs, getGroupRole, isGroupMuted, formatMuteRemainingLabel, resolveGroupMemberKeyByName, type GroupAdminAction } from "@/lib/group-admin";
-import { applyAvatarCandidatePick } from "@/lib/avatar-change";
+import { applyAvatarCandidatePick, addAvatarCandidate, imageUrlToAvatarDataUrl } from "@/lib/avatar-change";
 import { extractTextToolDirectiveText } from "@/lib/text-tool-protocol";
 import { emitChatPluginEvent, getChatPluginHookBus, runChatPluginTransform } from "@/lib/chat-plugin-hooks";
 import { CHAT_PLUGIN_TOAST_EVENT, getChatPluginRuntime } from "@/lib/chat-plugin-runtime";
@@ -280,6 +280,7 @@ function reasoningPreviewLine(text: string): string {
 }
 
 function isHiddenChatFlowMessage(msg: ChatMessage, displayContent?: string): boolean {
+    if (msg.mediaData?.hiddenInChat) return true;
     if (msg.mediaType === "tool_result" || msg.mediaType === "tool_call") return true;
     return !isChatVisualMedia(msg)
         && !getChatFlowVisibleContent(msg, displayContent)
@@ -3380,16 +3381,46 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         await runManagedGeneration({ history: latestMessages });
     };
 
-    // 「让 TA 自己挑头像」：写入一条系统指令（引导 TA 用 [换头像:编号] 选择并说明理由），再触发一轮回复
+    // 「让 TA 自己挑头像」：先把候选图按编号顺序写进历史（隐藏，视觉模型可直接看到图），
+    // 再写一条隐藏的系统指令引导 TA 用 [换头像:编号] 选择并说明理由，最后触发一轮回复
     const requestAvatarPick = async (candidateCount: number) => {
         if (session.isGroup || isGeneratingRef.current) return;
+        const contact = loadChatContacts().find(c => c.characterId === session.contactId);
+        const candidates = (contact?.avatarCandidates || []).slice(0, candidateCount);
+        candidates.forEach((candidate, idx) => {
+            pushChatMessage({
+                sessionId: session.id,
+                role: "user",
+                mediaType: "image",
+                content: `（系统提示：这是头像候选相册里的第 ${idx + 1} 张，编号 ${idx + 1}）`,
+                mediaUrl: candidate.image,
+                mediaData: { hiddenInChat: true, label: `头像候选 ${idx + 1}` },
+            });
+        });
         pushChatMessage({
             sessionId: session.id,
             role: "system",
             mediaType: "system_instruction",
-            content: `（系统提示：用户为你准备了 ${candidateCount} 张候选头像，编号 1-${candidateCount}。请挑一张你最喜欢的，用 [换头像:编号] 指令换上，并用一两句话告诉用户你选择它的理由。）`,
+            content: `（系统提示：用户为你准备了 ${candidateCount} 张候选头像，编号 1-${candidateCount}，上面已按编号顺序逐一展示给你。现在请你主动从中挑一张最喜欢的换上。你必须在回复中独占一行输出 [换头像:编号]（编号是 1 到 ${candidateCount} 之间的整数，例如 [换头像:2]），然后在其他行用一两句话告诉用户你为什么选它。不要省略这条指令。）`,
+            mediaData: { hiddenInChat: true },
         });
         await triggerReply();
+    };
+
+    // 私聊里发实拍图：自动把图压缩后收入 TA 的头像候选相册，
+    // 消息带上候选编号，TA 看到喜欢的可以直接用 [换头像:编号] 换上
+    const sendPhotoWithAvatarCandidate = async (desc: string, imageDataUrl?: string) => {
+        let candidateIndex: number | undefined;
+        if (!session.isGroup && imageDataUrl) {
+            try {
+                const avatarDataUrl = await imageUrlToAvatarDataUrl(imageDataUrl);
+                const added = addAvatarCandidate(session.contactId, avatarDataUrl);
+                if (added.ok && added.candidateIndex) candidateIndex = added.candidateIndex;
+            } catch {
+                // 压缩失败就按原样发图，不影响聊天
+            }
+        }
+        sendRichMessage("image", { label: desc, ...(candidateIndex ? { candidateIndex } : {}) }, "", imageDataUrl);
     };
 
     // ── Rich media send helpers ──
@@ -6458,7 +6489,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             )}
             {richModal === "photo" && (
                 <PhotoInputModal
-                    onSend={(desc, imageDataUrl) => { setRichModal(null); sendRichMessage("image", { label: desc }, "", imageDataUrl); }}
+                    onSend={(desc, imageDataUrl) => { setRichModal(null); void sendPhotoWithAvatarCandidate(desc, imageDataUrl); }}
                     onClose={() => setRichModal(null)}
                 />
             )}

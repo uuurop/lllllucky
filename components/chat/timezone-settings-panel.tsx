@@ -221,7 +221,6 @@ export function TimezoneSettingsPanel({ onBack }: { onBack: () => void }) {
                                     onChange={(e) => setPickerSearch(e.target.value)}
                                     placeholder="搜索时区，如 Tokyo、London、New_York"
                                     style={{ paddingLeft: 32 }}
-                                    autoFocus
                                 />
                             </div>
                             <div className="flex flex-col gap-1">
