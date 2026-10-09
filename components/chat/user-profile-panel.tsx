@@ -19,6 +19,7 @@ import { StickerManager } from "./sticker-manager";
 import { ChatPluginManager } from "./chat-plugin-manager";
 import { ChatPluginPageBoundary } from "./chat-plugin-page-boundary";
 import { WalletPanel } from "./wallet-panel";
+import { TimezoneSettingsPanel } from "./timezone-settings-panel";
 import { loadMomentsConfig, saveMomentsConfig, DEFAULT_MOMENTS_CONFIG, type MomentsInteractionConfig, getAllPosts } from "@/lib/moments-storage";
 import { loadChatContacts } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
@@ -42,6 +43,7 @@ import {
     ChevronRight,
     Clock,
     FileCode2,
+    Globe,
     Heart,
     MessageSquare,
     MessageSquareDashed,
@@ -156,6 +158,7 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     const [showCSSEditor, setShowCSSEditor] = useState(false);
     const [showMomentsSettings, setShowMomentsSettings] = useState(false);
     const [showWalletPanel, setShowWalletPanel] = useState(false);
+    const [showTimezoneSettings, setShowTimezoneSettings] = useState(false);
     const [identity, setIdentity] = useState<UserIdentity | null>(null);
     const [notifEnabled, setNotifEnabled] = useState(false);
     const [notifHint, setNotifHint] = useState<string | null>(null);
@@ -278,6 +281,9 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     }
     if (showWalletPanel) {
         return <WalletPanel onBack={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowWalletPanel(false); }} />;
+    }
+    if (showTimezoneSettings) {
+        return <TimezoneSettingsPanel onBack={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowTimezoneSettings(false); }} />;
     }
 
     return (
@@ -421,6 +427,14 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                             <div className="flex flex-col flex-1 text-left gap-0.5">
                                 <span className="ts-14 font-semibold text-[var(--c-text-title)]">离线推送与定时消息</span>
                                 <span className="ts-11 text-[var(--c-text)] opacity-70">关掉后台也能收到推送、安静时段、定时主动消息</span>
+                            </div>
+                            <ChevronRight size={16} className="text-[var(--c-icon)] opacity-50" />
+                        </button>
+                        <button className="flex items-center gap-3 py-3.5 w-full" onClick={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: true })); setShowTimezoneSettings(true); }}>
+                            <Globe size={18} className="text-[var(--c-icon)] opacity-70" strokeWidth={1.25}/>
+                            <div className="flex flex-col flex-1 text-left gap-0.5">
+                                <span className="ts-14 font-semibold text-[var(--c-text-title)]">时区与所在地</span>
+                                <span className="ts-11 text-[var(--c-text)] opacity-70">给每个联系人绑定当地时区，TA 按自己的钟点生活</span>
                             </div>
                             <ChevronRight size={16} className="text-[var(--c-icon)] opacity-50" />
                         </button>
