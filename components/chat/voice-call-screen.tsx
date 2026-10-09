@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { ChatSession, ChatMessage, loadChatMessages, pushChatMessage, getLatestCharacterStateValues } from "@/lib/chat-storage";
+import { ChatSession, ChatMessage, loadChatMessages, pushChatMessage, getLatestCharacterStateValues, resolveChatAvatar } from "@/lib/chat-storage";
 import { getStatusRegionConfig, isCustomStatusRegionActive } from "@/lib/chat-status-region";
 import type { StateValue } from "@/lib/chat-storage";
 import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
@@ -636,7 +636,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
             <button
                 type="button"
                 className="call-mini-window"
-                style={{ backgroundImage: `url(${bgImageResolved || character.avatar || ""})` }}
+                style={{ backgroundImage: `url(${bgImageResolved || resolveChatAvatar(character.id) || ""})` }}
                 onClick={onRestore}
                 aria-label={`返回与${character.name}的语音通话`}
                 title="点击返回通话"
@@ -697,9 +697,9 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                             className="voicecall-avatar"
                             {...(callState === "AI_SPEAKING" ? { "data-speaking": "" } : {})}
                         >
-                            {character.avatar ? (
+                            {resolveChatAvatar(character.id) ? (
                                 <img
-                                    src={character.avatar}
+                                    src={resolveChatAvatar(character.id)}
                                     alt={character.name}
                                     className="w-full h-full object-cover"
                                 />

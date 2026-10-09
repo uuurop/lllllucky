@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, Fragment, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChatSession, ChatMessage, CHAT_APP_SETTINGS_UPDATED_EVENT, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT, CHAT_LOAD_MORE_MESSAGE_COUNT, CHAT_REQUEST_REPLY_EVENT, loadChatAppSettings, loadChatMessages, loadChatContacts, loadChatSessions, saveChatSessions, pushChatMessage, updateChatMessage, deleteChatMessage, deleteChatMessagesFrom, deleteChatMessagesByIds, retractChatMessage, editChatMessage, updateMessageMediaData, replaceResponseBatchWithParts, replaceGroupResponseRound, isReadingDiscussMessage, isSystemInstructionMessage, createResponseBatchId, createResponseRoundId, getLatestStateValues, getLatestCharacterStateValues, compareChatMessages, isSessionStreamingEnabled } from "@/lib/chat-storage";
+import { ChatSession, ChatMessage, CHAT_APP_SETTINGS_UPDATED_EVENT, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT, CHAT_LOAD_MORE_MESSAGE_COUNT, CHAT_REQUEST_REPLY_EVENT, loadChatAppSettings, loadChatMessages, loadChatContacts, loadChatSessions, saveChatSessions, pushChatMessage, updateChatMessage, deleteChatMessage, deleteChatMessagesFrom, deleteChatMessagesByIds, retractChatMessage, editChatMessage, updateMessageMediaData, replaceResponseBatchWithParts, replaceGroupResponseRound, isReadingDiscussMessage, isSystemInstructionMessage, createResponseBatchId, createResponseRoundId, getLatestStateValues, getLatestCharacterStateValues, compareChatMessages, isSessionStreamingEnabled, resolveChatAvatar, CHAT_AVATAR_UPDATED_EVENT } from "@/lib/chat-storage";
 import { cleanStreamText, splitStreamPreviewSegments, stripLiteralTexts, stripXmlTagBlocks } from "@/lib/stream-preview";
 import type { StateValue } from "@/lib/chat-storage";
 import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
@@ -84,6 +84,7 @@ import {
 } from "@/lib/chat-screen-effects";
 import { abortableDelay, throwIfAborted } from "@/lib/abort-utils";
 import { GROUP_SELF_KEY, canGroupAdminAct, applyGroupAdminAction, buildGroupAdminNoticeText, getGroupMemberDisplayName, getGroupMuteRemainingMs, getGroupRole, isGroupMuted, formatMuteRemainingLabel, resolveGroupMemberKeyByName, type GroupAdminAction } from "@/lib/group-admin";
+import { applyAvatarCandidatePick } from "@/lib/avatar-change";
 import { extractTextToolDirectiveText } from "@/lib/text-tool-protocol";
 import { emitChatPluginEvent, getChatPluginHookBus, runChatPluginTransform } from "@/lib/chat-plugin-hooks";
 import { CHAT_PLUGIN_TOAST_EVENT, getChatPluginRuntime } from "@/lib/chat-plugin-runtime";
@@ -97,12 +98,18 @@ function isCallSysMsg(msg: ChatMessage): boolean {
     return CALL_SYS_RE.test(msg.content);
 }
 /** Returns the effective UI role: call messages render as "system" regardless of stored role */
-const ACTION_MEDIA_TYPES = new Set(["poke", "accept_red_packet", "decline_red_packet", "accept_transfer", "decline_transfer", "accept_payment_request", "decline_payment_request", "group_admin_notice"]);
-// 拍一拍/群管理通知/通话留痕渲染成灰色系统小字，没有 💭 面板入口——
+const ACTION_MEDIA_TYPES = new Set(["poke", "accept_red_packet", "decline_red_packet", "accept_transfer", "decline_transfer", "accept_payment_request", "decline_payment_request", "group_admin_notice", "avatar_change"]);
+// 拍一拍/群管理通知/换头像/通话留痕渲染成灰色系统小字，没有 💭 面板入口——
 // 状态栏/内心独白/状态值挂上去会被显示层吞掉，挂载时必须跳过它们
 function canCarryFoldedPanel(part: { content?: string; mediaType?: ChatMessage["mediaType"] }): boolean {
-    if (part.mediaType === "poke" || part.mediaType === "group_admin_notice") return false;
+    if (part.mediaType === "poke" || part.mediaType === "group_admin_notice" || part.mediaType === "avatar_change") return false;
     return !CALL_SYS_RE.test(part.content || "");
+}
+
+// 聊天内角色头像：联系人自定义头像优先（resolveChatAvatar 内部处理），无图回退占位头像
+function chatAvatarImg(characterId: string | undefined | null, className?: string) {
+    const avatar = resolveChatAvatar(characterId);
+    return avatar ? <img src={avatar} className={className} alt="" /> : <ChatFallbackAvatar />;
 }
 function uiRole(msg: ChatMessage): string {
     if (msg.role === "system" || ACTION_MEDIA_TYPES.has(msg.mediaType || "")) return "system";
@@ -1699,6 +1706,14 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     mediaData: { pokeSender, pokeTarget },
                 }];
             }
+            if (part.mediaType === "avatar_change") {
+                // 编辑重放时不再执行副作用（首次生成时已换过头像），只保留系统提示文本
+                return [{
+                    content: `${charN} 换上了新头像`,
+                    mediaType: "avatar_change" as const,
+                    mediaData: part.mediaData,
+                }];
+            }
             return [part];
         }).filter(part => part.mediaType || part.content.trim());
     }, [character?.name, userIdentity?.name]);
@@ -1713,6 +1728,14 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             window.removeEventListener("settings-bindings-updated", refreshRegexes);
             window.removeEventListener("settings-presets-updated", refreshRegexes);
         };
+    }, []);
+
+    // 头像更换（用户在设置面板直换 / TA 主动换）后立即刷新界面上的头像
+    const [, setAvatarRevision] = useState(0);
+    useEffect(() => {
+        const bump = () => setAvatarRevision(v => v + 1);
+        window.addEventListener(CHAT_AVATAR_UPDATED_EVENT, bump);
+        return () => window.removeEventListener(CHAT_AVATAR_UPDATED_EVENT, bump);
     }, []);
 
     const availableShoppingGifts = useMemo(
@@ -2480,6 +2503,10 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     handleGroupPaymentRequestAction("decline", claimer, owner);
                     continue;
                 }
+                if (part.mediaType === "avatar_change") {
+                    // 换头像仅支持私聊联系人，群聊里静默丢弃
+                    continue;
+                }
                 if (part.mediaType === "group_admin_notice") {
                     if (!isFirst && !revealOptions?.instantReveal) await abortableDelay(800, guard?.signal);
                     throwIfGenerationStopped(guard);
@@ -2865,6 +2892,19 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     mediaType: "poke",
                     mediaData: { pokeSender, pokeTarget },
                 });
+                continue;
+            }
+            // 换头像：TA 从用户预存的候选相册里挑一张主动换上；编号无效/相册为空时静默丢弃
+            if (p.mediaType === "avatar_change") {
+                const candidateIndex = p.mediaData?.candidateIndex ?? 0;
+                const result = applyAvatarCandidatePick(session.contactId, candidateIndex);
+                if (result.ok) {
+                    pushFilteredPart({
+                        content: `${charN} 换上了新头像`,
+                        mediaType: "avatar_change",
+                        mediaData: { candidateIndex },
+                    });
+                }
                 continue;
             }
             pushFilteredPart(p);
@@ -3338,6 +3378,18 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         const latestMessages = loadChatMessages(session.id);
         applyStoredMessageWindow(latestMessages);
         await runManagedGeneration({ history: latestMessages });
+    };
+
+    // 「让 TA 自己挑头像」：写入一条系统指令（引导 TA 用 [换头像:编号] 选择并说明理由），再触发一轮回复
+    const requestAvatarPick = async (candidateCount: number) => {
+        if (session.isGroup || isGeneratingRef.current) return;
+        pushChatMessage({
+            sessionId: session.id,
+            role: "system",
+            mediaType: "system_instruction",
+            content: `（系统提示：用户为你准备了 ${candidateCount} 张候选头像，编号 1-${candidateCount}。请挑一张你最喜欢的，用 [换头像:编号] 指令换上，并用一两句话告诉用户你选择它的理由。）`,
+        });
+        await triggerReply();
     };
 
     // ── Rich media send helpers ──
@@ -4490,6 +4542,14 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     mediaData: { pokeSender: sender, pokeTarget: target },
                 }];
             }
+            if (part.mediaType === "avatar_change") {
+                // 编辑重放不再执行换头像副作用，只保留系统提示
+                return [{
+                    content: `${senderNameOverride || character?.name || "对方"} 换上了新头像`,
+                    mediaType: "avatar_change" as const,
+                    mediaData: part.mediaData,
+                }];
+            }
             return [part];
         }).filter(part => part.mediaType || part.content.trim());
     };
@@ -5524,7 +5584,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                 <div className="chat-offline-entry" data-role="assistant">
                                     {/* 头像占位：默认 display:none（见 chat.css），供自定义 CSS 显示 */}
                                     <div className="chat-offline-avatar" aria-hidden="true">
-                                        {character?.avatar ? <img src={character.avatar} alt="" /> : <ChatFallbackAvatar />}
+                                        {chatAvatarImg(character?.id)}
                                     </div>
                                     <div className="chat-offline-label-row">
                                         <div className="chat-offline-label">{session.isGroup ? (session.groupName || "群聊") : (character?.name || "对方")}</div>
@@ -5625,7 +5685,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                        正文用轻量 pre-wrap 渲染（避免每帧 markdown/双语解析），落库时原地换成正式排版 */
                                     <div className="chat-offline-entry" data-role="assistant">
                                         <div className="chat-offline-avatar" aria-hidden="true">
-                                            {character?.avatar ? <img src={character.avatar} alt="" /> : <ChatFallbackAvatar />}
+                                            {chatAvatarImg(character?.id)}
                                         </div>
                                         <div className="chat-offline-label-row">
                                             <div className="chat-offline-label">{session.isGroup ? (session.groupName || "群聊") : (character?.name || "对方")}</div>
@@ -5971,11 +6031,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                                             : character;
                                                         if (targetChar) sendRichMessage("poke", { pokeTarget: targetChar.name });
                                                     }} className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden cursor-pointer">
-                                                        {senderChar?.avatar ? (
-                                                            <img src={senderChar.avatar} className="w-full h-full object-cover" alt="" />
-                                                        ) : (
-                                                            <ChatFallbackAvatar />
-                                                        )}
+                                                        {chatAvatarImg(senderChar?.id, "w-full h-full object-cover")}
                                                     </div>
                                                             </>
                                                         );
@@ -6135,7 +6191,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                         <div key={`stream-${part.characterId}-${i}-${j}`} className="chat-msg-wrapper" data-role="assistant">
                                             <div className="chat-msg-avatar flex flex-col items-center gap-1 shrink-0">
                                                 <div className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden">
-                                                    {senderChar?.avatar ? <img src={senderChar.avatar} className="w-full h-full object-cover" alt="" /> : <ChatFallbackAvatar />}
+                                                    {chatAvatarImg(senderChar?.id, "w-full h-full object-cover")}
                                                 </div>
                                             </div>
                                             <div className="chat-msg-content-wrap flex flex-col min-w-0 max-w-[70%]">
@@ -6157,7 +6213,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                     <div key={`stream-seg-${j}`} className="chat-msg-wrapper" data-role="assistant">
                                         <div className="chat-msg-avatar flex flex-col items-center gap-1 shrink-0">
                                             <div className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden">
-                                                {character?.avatar ? <img src={character.avatar} className="w-full h-full object-cover" alt="" /> : <ChatFallbackAvatar />}
+                                                {chatAvatarImg(character?.id, "w-full h-full object-cover")}
                                             </div>
                                         </div>
                                         <div className="chat-msg-content-wrap flex flex-col min-w-0 max-w-[70%]">
@@ -6288,6 +6344,10 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         onJumpToMessage={(messageId) => {
                             setShowSettings(false);
                             jumpToStoredMessage(messageId);
+                        }}
+                        onRequestAvatarPick={(candidateCount) => {
+                            setShowSettings(false);
+                            void requestAvatarPick(candidateCount);
                         }}
                         onToolHistoryCleared={syncMessagesFromStorage}
                         offlineHistoryBusy={isOfflineGenerating}

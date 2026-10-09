@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
 import { findCustomStickerByName, resolveCustomStickerUrl } from "@/lib/custom-sticker-storage";
 import { isMediaStoreRef, loadMediaObjectUrl } from "@/lib/media-cache-storage";
 import { getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
-import { ChatMessage, createOrGetSession, updateMessageMediaStatus, updateMessageMediaData } from "@/lib/chat-storage";
+import { ChatMessage, createOrGetSession, updateMessageMediaStatus, updateMessageMediaData, resolveChatAvatar } from "@/lib/chat-storage";
 import { resolveContactCard } from "@/lib/contact-card";
 import { loadCharacters } from "@/lib/character-storage";
 import { CHAT_OPEN_SESSION_EVENT, dispatchOpenAddContact } from "@/lib/chat-notification-events";
@@ -1052,8 +1052,8 @@ function ContactCardBubble({ msg, characterId }: { msg: ChatMessage; characterId
             <div className="chat-contact-card" onClick={handleClick} role="button">
                 <div className="chat-contact-card-main">
                     <div className="chat-contact-card-avatar">
-                        {resolved.character?.avatar
-                            ? <img src={resolved.character.avatar} alt="" />
+                        {resolveChatAvatar(resolved.character?.id)
+                            ? <img src={resolveChatAvatar(resolved.character?.id)} alt="" />
                             : <CharAvatarFallbackInline name={contactName} />}
                     </div>
                     <div className="chat-contact-card-info">

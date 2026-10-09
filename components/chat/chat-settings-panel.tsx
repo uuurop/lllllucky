@@ -15,9 +15,18 @@ import {
     pushChatMessage,
     removeChatContact,
     normalizeVisionImagePromptLimit,
+    resolveChatAvatar,
+    CHAT_AVATAR_UPDATED_EVENT,
     MAX_VISION_IMAGE_PROMPT_LIMIT,
     type ChatMessage,
 } from "@/lib/chat-storage";
+import {
+    applyCustomAvatar,
+    clearCustomAvatar,
+    addAvatarCandidate,
+    removeAvatarCandidate,
+    fileToAvatarDataUrl,
+} from "@/lib/avatar-change";
 import {
     GROUP_SELF_KEY,
     applyGroupAdminAction,
@@ -44,10 +53,11 @@ import { downloadFile } from "@/lib/download-utils";
 import { getSchemes, saveScheme, deleteScheme, type CSSScheme } from "@/lib/css-scheme-storage";
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { KeyboardAutoSendDebounceItem } from "@/components/chat/keyboard-auto-send-debounce-item";
-import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, type LucideIcon } from "lucide-react";
+import { ChevronRight, Image as ImageIcon, ImagePlus, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, type LucideIcon } from "lucide-react";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { ConfirmDialog } from "@/components/ui/modal";
+import { Alert } from "@/components/ui/feedback";
 import { CHAT_SESSION_CSS_EXAMPLE } from "@/lib/css-examples";
 import { Toggle, Input } from "@/components/ui/form";
 import { PageShell } from "@/components/ui/page-shell";
@@ -186,6 +196,8 @@ type ChatSettingsPanelProps = {
     session: ChatSession;
     onClose: () => void;
     onJumpToMessage?: (messageId: string) => void;
+    /** 「让 TA 自己挑头像」：由 chat-room 写入系统指令并触发一轮 AI 回复 */
+    onRequestAvatarPick?: (candidateCount: number) => void;
     onDeleteFriend?: () => void;
     onSessionDeleted?: () => void;
     onToolHistoryCleared?: () => void;
@@ -287,6 +299,7 @@ export function ChatSettingsPanel({
     session,
     onClose,
     onJumpToMessage,
+    onRequestAvatarPick,
     onDeleteFriend,
     onSessionDeleted,
     onToolHistoryCleared,
@@ -455,6 +468,101 @@ export function ChatSettingsPanel({
         setSearchHistoryMessages([]);
         setSearchHasMore(false);
         setIsSearching(false);
+    };
+
+    // ── TA 的头像：直接更换 / 恢复默认 / 候选相册 / 让 TA 自己挑 ──
+    const [showAvatarPanel, setShowAvatarPanel] = useState(false);
+    const [avatarBusy, setAvatarBusy] = useState(false);
+    const [avatarError, setAvatarError] = useState("");
+    // 变更后 bump 一下让面板重读联系人数据
+    const [avatarTick, setAvatarTick] = useState(0);
+    const avatarFileRef = useRef<HTMLInputElement | null>(null);
+    const candidateFileRef = useRef<HTMLInputElement | null>(null);
+
+    const openAvatarPanel = () => {
+        setAvatarError("");
+        setShowAvatarPanel(true);
+    };
+
+    const avatarContact = useMemo(
+        () => loadChatContacts().find(c => c.characterId === session.contactId),
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- avatarTick 变更时强制重读
+        [session.contactId, avatarTick],
+    );
+    const currentChatAvatar = useMemo(
+        () => resolveChatAvatar(session.contactId),
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- 同上
+        [session.contactId, avatarTick],
+    );
+    const avatarCandidates = avatarContact?.avatarCandidates || [];
+    const hasCustomAvatar = !!avatarContact?.customAvatar;
+
+    const handleDirectAvatarFile = async (file: File | undefined) => {
+        if (!file || avatarBusy) return;
+        setAvatarBusy(true);
+        setAvatarError("");
+        try {
+            const dataUrl = await fileToAvatarDataUrl(file);
+            const result = applyCustomAvatar(session.contactId, dataUrl);
+            if (!result.ok) {
+                setAvatarError(result.reason || "更换失败");
+                return;
+            }
+            // 聊天里留一条系统提示，和 TA 主动换头像的提示同款
+            pushChatMessage({
+                sessionId: session.id,
+                role: "system",
+                mediaType: "avatar_change",
+                content: "你为对方更换了新头像",
+            });
+            setAvatarTick(t => t + 1);
+        } catch {
+            setAvatarError("图片读取失败，请换一张试试");
+        } finally {
+            setAvatarBusy(false);
+        }
+    };
+
+    const handleRestoreDefaultAvatar = () => {
+        const result = clearCustomAvatar(session.contactId);
+        if (!result.ok) {
+            setAvatarError(result.reason || "操作失败");
+            return;
+        }
+        pushChatMessage({
+            sessionId: session.id,
+            role: "system",
+            mediaType: "avatar_change",
+            content: "你把对方的头像恢复成了默认头像",
+        });
+        setAvatarTick(t => t + 1);
+    };
+
+    const handleCandidateFile = async (file: File | undefined) => {
+        if (!file || avatarBusy) return;
+        setAvatarBusy(true);
+        setAvatarError("");
+        try {
+            const dataUrl = await fileToAvatarDataUrl(file);
+            const result = addAvatarCandidate(session.contactId, dataUrl);
+            if (!result.ok) setAvatarError(result.reason || "添加失败");
+            else setAvatarTick(t => t + 1);
+        } catch {
+            setAvatarError("图片读取失败，请换一张试试");
+        } finally {
+            setAvatarBusy(false);
+        }
+    };
+
+    const handleRemoveCandidate = (candidateId: string) => {
+        removeAvatarCandidate(session.contactId, candidateId);
+        setAvatarTick(t => t + 1);
+    };
+
+    const handleAskCharacterToPick = () => {
+        if (avatarCandidates.length === 0) return;
+        setShowAvatarPanel(false);
+        onRequestAvatarPick?.(avatarCandidates.length);
     };
 
     const loadMoreSearchHistory = () => {
@@ -764,11 +872,14 @@ export function ChatSettingsPanel({
                     <div className="chat-msg-wrapper" data-role={resultRole}>
                         {resultRole === "assistant" && (
                             <div className="chat-msg-avatar w-[40px] h-[40px] rounded-[20px] bg-[var(--c-page-body-bg)] shrink-0 flex items-center justify-center overflow-hidden">
-                                {senderChar?.avatar ? (
-                                    <img src={senderChar.avatar} className="w-full h-full object-cover" alt="" />
-                                ) : (
-                                    <ChatFallbackAvatar />
-                                )}
+                                {(() => {
+                                    const av = resolveChatAvatar(senderChar?.id);
+                                    return av ? (
+                                        <img src={av} className="w-full h-full object-cover" alt="" />
+                                    ) : (
+                                        <ChatFallbackAvatar />
+                                    );
+                                })()}
                             </div>
                         )}
                         <div className={`chat-msg-content-wrap flex flex-col min-w-0 max-w-[70%] ${isStandaloneHtmlPreview ? "chat-msg-content-wrap-html" : ""}`}>
@@ -843,6 +954,16 @@ export function ChatSettingsPanel({
                         <div className="menu-label-group"><span className="menu-label">查找聊天记录</span></div>
                         <div className="menu-right"><ChevronRight size={16} /></div>
                     </button>
+                    {!session.isGroup && (
+                        <button className="menu-item" onClick={openAvatarPanel}>
+                            <ChatInfoIcon icon={ImagePlus} color={BINDING_ACCENTS.voice} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">TA 的头像</span>
+                                <span className="menu-desc">直接换头像，或准备候选让 TA 自己挑</span>
+                            </div>
+                            <div className="menu-right"><ChevronRight size={16} /></div>
+                        </button>
+                    )}
                     {!session.isGroup && isAgentComputerConfigured() && (
                         <button className="menu-item" onClick={() => setShowComputer(true)}>
                             <ChatInfoIcon icon={Laptop} color={BINDING_ACCENTS.memory} />
@@ -1513,6 +1634,124 @@ export function ChatSettingsPanel({
                     onConfirm={handleClearToolHistory}
                     onCancel={() => setShowConfirmClearTools(false)}
                 />
+            )}
+
+            {/* TA 的头像管理 */}
+            {showAvatarPanel && (
+                <div className="modal-overlay modal-overlay-bottom">
+                    <div className="modal-sheet" data-ui="modal-sheet">
+                        <div className="modal-header" data-ui="modal-header">
+                            <button onClick={() => setShowAvatarPanel(false)} className="modal-header-btn modal-header-btn-muted"><X size={18} /></button>
+                            <span className="modal-header-title">TA 的头像</span>
+                            <span className="modal-header-btn modal-header-btn-muted" style={{ visibility: "hidden" }}><X size={18} /></span>
+                        </div>
+
+                        <div className="modal-body hide-scrollbar pb-10" data-ui="modal-body">
+                            <div className="flex flex-col gap-4">
+                                {/* 当前头像 */}
+                                <div className="flex flex-col items-center gap-2">
+                                    <div className="w-[84px] h-[84px] rounded-[24px] overflow-hidden bg-[var(--c-input)] flex items-center justify-center">
+                                        {currentChatAvatar
+                                            ? <img src={currentChatAvatar} alt="" className="w-full h-full object-cover" />
+                                            : <ChatFallbackAvatar />}
+                                    </div>
+                                    <span className="menu-desc">{hasCustomAvatar ? "当前是聊天专属头像" : "当前使用角色卡头像"}</span>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => avatarFileRef.current?.click()}
+                                    disabled={avatarBusy}
+                                    className="ui-btn ui-btn-primary w-full"
+                                >
+                                    <Upload size={16} />
+                                    {avatarBusy ? "处理中..." : "上传图片，直接给 TA 换上"}
+                                </button>
+                                {hasCustomAvatar && (
+                                    <button
+                                        type="button"
+                                        onClick={handleRestoreDefaultAvatar}
+                                        disabled={avatarBusy}
+                                        className="ui-btn ui-btn-soft-action w-full"
+                                    >
+                                        恢复角色卡默认头像
+                                    </button>
+                                )}
+
+                                {/* 候选相册 */}
+                                <div className="flex flex-col gap-2 mt-2">
+                                    <div className="flex items-center justify-between px-1">
+                                        <span className="menu-label font-medium">候选相册（{avatarCandidates.length}）</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => candidateFileRef.current?.click()}
+                                            disabled={avatarBusy}
+                                            className="ui-link-btn"
+                                            aria-label="添加候选头像"
+                                            title="添加候选头像"
+                                        >
+                                            <ImagePlus size={18} />
+                                        </button>
+                                    </div>
+                                    <span className="menu-desc ml-1">
+                                        候选相册里的图，TA 可以在聊天中主动挑一张换上；换头像的事会写进 TA 的记忆。
+                                    </span>
+                                    {avatarCandidates.length > 0 && (
+                                        <div className="grid grid-cols-4 gap-2">
+                                            {avatarCandidates.map((candidate, index) => (
+                                                <div key={candidate.id} className="relative aspect-square rounded-xl overflow-hidden bg-[var(--c-input)]">
+                                                    <img src={candidate.image} alt={`候选 ${index + 1}`} className="w-full h-full object-cover" />
+                                                    <span className="absolute left-1 bottom-1 text-[10px] font-bold text-white" style={{ textShadow: "0 1px 2px rgba(0,0,0,0.6)" }}>{index + 1}</span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleRemoveCandidate(candidate.id)}
+                                                        className="absolute top-0.5 right-0.5 w-5 h-5 grid place-items-center rounded-full bg-black/55 text-white border-0"
+                                                        aria-label={`删除候选 ${index + 1}`}
+                                                    >
+                                                        <X size={12} />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={handleAskCharacterToPick}
+                                        disabled={avatarCandidates.length === 0 || !onRequestAvatarPick}
+                                        className="ui-btn ui-btn-soft-action w-full"
+                                    >
+                                        <Sparkles size={16} />
+                                        让 TA 自己挑一张换上
+                                    </button>
+                                    {avatarCandidates.length === 0 && (
+                                        <span className="menu-desc ml-1">先点右上角 + 给 TA 准备几张候选头像</span>
+                                    )}
+                                </div>
+
+                                {avatarError && (
+                                    <Alert variant="danger">
+                                        <AlertCircle size={14} />
+                                        {avatarError}
+                                    </Alert>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                    <input
+                        ref={avatarFileRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => { void handleDirectAvatarFile(e.target.files?.[0]); e.target.value = ""; }}
+                    />
+                    <input
+                        ref={candidateFileRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => { void handleCandidateFile(e.target.files?.[0]); e.target.value = ""; }}
+                    />
+                </div>
             )}
 
             {/* Modal: Confirm Delete Session */}

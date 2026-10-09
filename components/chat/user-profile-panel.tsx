@@ -1,14 +1,17 @@
 "use client";
 
-import { useState, useEffect, useMemo, type CSSProperties } from "react";
+import { useState, useEffect, useMemo, useRef, type CSSProperties } from "react";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import {
     loadFollowUpConfig,
     saveFollowUpConfig,
     getDefaultFollowUpConfig,
     resolveUserIdentity,
+    loadUserIdentities,
+    saveUserIdentities,
 } from "@/lib/settings-storage";
-import { loadChatAppSettings, saveChatAppSettings } from "@/lib/chat-storage";
+import { fileToAvatarDataUrl } from "@/lib/avatar-change";
+import { loadChatAppSettings, saveChatAppSettings, resolveChatAvatar } from "@/lib/chat-storage";
 import type { UserIdentity } from "@/components/settings/user-identity";
 import { getApiLogs, clearApiLogs, type DebugInfo } from "@/lib/chat-engine";
 import type { FollowUpConfig } from "@/lib/settings-storage";
@@ -41,6 +44,7 @@ import {
     CloudUpload,
     ChevronRight,
     Clock,
+    Camera,
     FileCode2,
     Heart,
     MessageSquare,
@@ -157,6 +161,31 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     const [showMomentsSettings, setShowMomentsSettings] = useState(false);
     const [showWalletPanel, setShowWalletPanel] = useState(false);
     const [identity, setIdentity] = useState<UserIdentity | null>(null);
+    const [avatarUploadBusy, setAvatarUploadBusy] = useState(false);
+    const userAvatarFileRef = useRef<HTMLInputElement | null>(null);
+
+    // 「我」界面点头像直接换：压缩后写回当前身份，全 app 即时生效
+    const handleUserAvatarFile = async (file: File | undefined) => {
+        if (!file || avatarUploadBusy) return;
+        const current = identity || resolveUserIdentity();
+        if (!current) return;
+        setAvatarUploadBusy(true);
+        try {
+            const dataUrl = await fileToAvatarDataUrl(file);
+            const identities = loadUserIdentities();
+            const index = identities.findIndex(i => i.id === current.id);
+            if (index >= 0) {
+                const next = [...identities];
+                next[index] = { ...next[index], avatarUrl: dataUrl };
+                saveUserIdentities(next);
+            }
+            setIdentity(resolveUserIdentity());
+        } catch {
+            alert("图片读取失败，请换一张试试");
+        } finally {
+            setAvatarUploadBusy(false);
+        }
+    };
     const [notifEnabled, setNotifEnabled] = useState(false);
     const [notifHint, setNotifHint] = useState<string | null>(null);
     const [notifChecking, setNotifChecking] = useState(false);
@@ -324,16 +353,38 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                     
                     {/* User Info & Stats Block */}
                     <div className="flex items-center gap-5 px-6 pt-2 pb-4">
-                        {/* Avatar */}
+                        {/* Avatar（点击更换） */}
                         <div className="relative shrink-0">
-                            <div className="w-[84px] h-[84px] rounded-full overflow-hidden bg-[var(--c-card)] border-2 border-white/50 shadow-sm flex items-center justify-center relative"
-                                 style={{ boxShadow: "0 4px 20px rgba(0,0,0,0.06)" }}>
+                            <div
+                                role="button"
+                                tabIndex={0}
+                                aria-label="更换头像"
+                                title="点击更换头像"
+                                onClick={() => { if (!avatarUploadBusy) userAvatarFileRef.current?.click(); }}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                        e.preventDefault();
+                                        if (!avatarUploadBusy) userAvatarFileRef.current?.click();
+                                    }
+                                }}
+                                className="w-[84px] h-[84px] rounded-full overflow-hidden bg-[var(--c-card)] border-2 border-white/50 shadow-sm flex items-center justify-center relative cursor-pointer"
+                                style={{ boxShadow: "0 4px 20px rgba(0,0,0,0.06)" }}>
                                 {identity?.avatarUrl ? (
                                     <img src={identity.avatarUrl} alt="User Avatar" className="w-full h-full object-cover" />
                                 ) : (
                                     <User size={38} color="var(--c-icon)" />
                                 )}
+                                <div className="absolute bottom-0 left-0 right-0 flex justify-center py-[3px]" style={{ background: "rgba(0,0,0,0.35)" }}>
+                                    <Camera size={13} color="#fff" />
+                                </div>
                             </div>
+                            <input
+                                ref={userAvatarFileRef}
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => { void handleUserAvatarFile(e.target.files?.[0]); e.target.value = ""; }}
+                            />
                         </div>
 
                         {/* Info & Stats */}
@@ -1076,7 +1127,7 @@ function InlineMomentsSettings({ onBack }: { onBack: () => void }) {
                     {showAutoPostList && enriched.map(c => (
                         <div key={c.characterId} className="menu-item" style={{ cursor: "default" }}>
                             <div className="chat-contact-avatar" style={{ width: 32, height: 32 }}>
-                                {c.char.avatar ? <img src={c.char.avatar} alt="" /> : <ChatFallbackAvatar />}
+                                {resolveChatAvatar(c.char.id) ? <img src={resolveChatAvatar(c.char.id)} alt="" /> : <ChatFallbackAvatar />}
                             </div>
                             <div className="menu-label-group">
                                 <span className="menu-label">{c.char.name}</span>
@@ -1116,8 +1167,8 @@ function InlineMomentsSettings({ onBack }: { onBack: () => void }) {
                                     <div className="chat-contact-avatar"
                                         style={selectedIds.has(c.characterId) ? { outline: "3px solid var(--c-success)", outlineOffset: "2px" } : undefined}
                                     >
-                                        {c.char.avatar ? (
-                                            <img src={c.char.avatar} alt="" />
+                                        {resolveChatAvatar(c.char.id) ? (
+                                            <img src={resolveChatAvatar(c.char.id)} alt="" />
                                         ) : (
                                             <ChatFallbackAvatar />
                                         )}

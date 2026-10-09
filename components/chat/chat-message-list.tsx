@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useSyncExternalStore } from "react";
 import { ChevronLeft } from "lucide-react";
-import { loadChatSessions, loadChatContacts, ChatSession, createOrGetSession, createGroupSession, pushChatMessage, addChatContact, loadChatMessages, getLastVisibleSessionMessage, getChatMessagePreview } from "@/lib/chat-storage";
+import { loadChatSessions, loadChatContacts, ChatSession, createOrGetSession, createGroupSession, pushChatMessage, addChatContact, loadChatMessages, getLastVisibleSessionMessage, getChatMessagePreview, resolveChatAvatar, CHAT_AVATAR_UPDATED_EVENT } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { Character } from "@/lib/character-types";
 import { resolveUserIdentity } from "@/lib/settings-storage";
@@ -147,9 +147,11 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
         const refreshSessions = () => setSessions(loadChatSessions());
         window.addEventListener("weixin-messages-updated", refreshSessions);
         window.addEventListener("chat-messages-updated", refreshSessions);
+        window.addEventListener(CHAT_AVATAR_UPDATED_EVENT, refreshSessions);
         return () => {
             window.removeEventListener("weixin-messages-updated", refreshSessions);
             window.removeEventListener("chat-messages-updated", refreshSessions);
+            window.removeEventListener(CHAT_AVATAR_UPDATED_EVENT, refreshSessions);
         };
     }, []);
 
@@ -731,8 +733,8 @@ function ContactPicker({ onClose, onSelect }: { onClose: () => void; onSelect: (
                                 onClick={() => onSelect(c.characterId)}
                             >
                                 <div className="chat-contact-avatar">
-                                    {c.char.avatar ? (
-                                        <img src={c.char.avatar} alt="" />
+                                    {resolveChatAvatar(c.char.id) ? (
+                                        <img src={resolveChatAvatar(c.char.id)} alt="" />
                                     ) : (
                                         <ChatFallbackAvatar />
                                     )}
@@ -768,7 +770,7 @@ function SessionItem({ session, onSelect, isPinned }: { session: ChatSession, on
             ...((session.participantIds || [])
                 .map(id => chars.find(c => c.id === id))
                 .filter(Boolean) as Character[])
-                .map(c => ({ id: c.id, name: c.name, avatar: c.avatar || "" })),
+                .map(c => ({ id: c.id, name: c.name, avatar: resolveChatAvatar(c.id) })),
         ].slice(0, 4)
         : [];
 
@@ -794,8 +796,8 @@ function SessionItem({ session, onSelect, isPinned }: { session: ChatSession, on
                 </div>
             ) : (
                 <div className="minimal-avatar-wrapper">
-                    {character?.avatar ? (
-                        <img src={character.avatar} className="w-full h-full object-cover pointer-events-none rounded-full" alt="" />
+                    {resolveChatAvatar(character?.id) ? (
+                        <img src={resolveChatAvatar(character?.id)} className="w-full h-full object-cover pointer-events-none rounded-full" alt="" />
                     ) : (
                         <ChatFallbackAvatar className="pointer-events-none rounded-full" />
                     )}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { loadChatContacts } from "@/lib/chat-storage";
+import { loadChatContacts, resolveChatAvatar } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { Character } from "@/lib/character-types";
@@ -62,8 +62,8 @@ export function GroupCreateModal({ onClose, onCreate }: GroupCreateModalProps) {
                                             onClick={() => toggle(c.characterId)}
                                         >
                                             <div className="chat-contact-avatar" style={isSelected ? { outline: "3px solid var(--c-success)", outlineOffset: "2px" } : undefined}>
-                                                {c.char.avatar ? (
-                                                    <img src={c.char.avatar} alt="" />
+                                                {resolveChatAvatar(c.char.id) ? (
+                                                    <img src={resolveChatAvatar(c.char.id)} alt="" />
                                                 ) : (
                                                     <ChatFallbackAvatar />
                                                 )}
@@ -102,8 +102,8 @@ export function GroupCreateModal({ onClose, onCreate }: GroupCreateModalProps) {
                             {selectedChars.map(c => (
                                 <div key={c.id} className="chat-contact-item">
                                     <div className="chat-contact-avatar">
-                                        {c.avatar ? (
-                                            <img src={c.avatar} alt="" />
+                                        {resolveChatAvatar(c.id) ? (
+                                            <img src={resolveChatAvatar(c.id)} alt="" />
                                         ) : (
                                             <ChatFallbackAvatar />
                                         )}

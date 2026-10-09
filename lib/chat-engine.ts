@@ -21,6 +21,7 @@ import {
     createResponseBatchId,
     createToolExecutionId,
     isSessionStreamingEnabled,
+    getAvatarCandidatesInfo,
 } from "./chat-storage";
 import { extractTextToolDirectiveText, stripTextToolDirectives } from "./text-tool-protocol";
 import type { ApiConfig, PresetConfig, Prompt, PromptOrderEntry, RegexConfig } from "./settings-types";
@@ -1919,6 +1920,7 @@ export async function buildChatPromptMessages(
         unifiedRecentItems,
         customStickerNames: getCustomStickerNames(character.id),
         customStickerExample: getCustomStickerExample(character.id),
+        avatarCandidatesInfo: getAvatarCandidatesInfo(character.id),
         musicLocal,
         musicCloud,
         musicOnlineHint,

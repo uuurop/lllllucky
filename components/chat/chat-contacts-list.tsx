@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, useSyncExternalStore } from "react";
-import { loadChatContacts, ChatContact, createOrGetSession, ChatSession, addChatContact, pushChatMessage, loadChatMessages } from "@/lib/chat-storage";
+import { loadChatContacts, ChatContact, createOrGetSession, ChatSession, addChatContact, pushChatMessage, loadChatMessages, resolveChatAvatar, CHAT_AVATAR_UPDATED_EVENT } from "@/lib/chat-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { PENDING_REPLY_PREFIX } from "@/lib/friend-request-engine";
 import { loadCharacters } from "@/lib/character-storage";
@@ -124,7 +124,11 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
         refresh();
         const handler = () => refresh();
         window.addEventListener("friend-requests-updated", handler);
-        return () => window.removeEventListener("friend-requests-updated", handler);
+        window.addEventListener(CHAT_AVATAR_UPDATED_EVENT, handler);
+        return () => {
+            window.removeEventListener("friend-requests-updated", handler);
+            window.removeEventListener(CHAT_AVATAR_UPDATED_EVENT, handler);
+        };
     }, [refresh]);
 
     /** Group contacts by pinyin initial */
@@ -281,11 +285,11 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
                                             className="minimal-list-item"
                                         >
                                             <div className="minimal-avatar-wrapper">
-                                                {char.avatar ? (
-                                                    <img src={char.avatar} className="w-full h-full object-cover rounded-full" alt="" />
+                                                {(() => { const av = resolveChatAvatar(char.id); return av ? (
+                                                    <img src={av} className="w-full h-full object-cover rounded-full" alt="" />
                                                 ) : (
                                                     <ChatFallbackAvatar className="rounded-full" />
-                                                )}
+                                                ); })()}
                                             </div>
                                             <div className="flex-1 overflow-hidden h-[48px] flex flex-col justify-center gap-1">
                                                 <div className="ts-16 font-medium text-[var(--c-text-title)] truncate">
@@ -343,13 +347,16 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
                                             onClick={() => setSelectedRequest(req)}
                                         >
                                             <div className="freq-avatar">
-                                                {char?.avatar ? (
-                                                    <img src={char.avatar} alt="" />
-                                                ) : (
-                                                    <div className="freq-avatar-fallback">
-                                                        {(char?.name || "?")[0]}
-                                                    </div>
-                                                )}
+                                                {(() => {
+                                                    const src = resolveChatAvatar(char?.id);
+                                                    return src ? (
+                                                        <img src={src} alt="" />
+                                                    ) : (
+                                                        <div className="freq-avatar-fallback">
+                                                            {(char?.name || "?")[0]}
+                                                        </div>
+                                                    );
+                                                })()}
                                             </div>
                                             <div className="flex-1 overflow-hidden">
                                                 <div className="menu-label font-medium truncate">
@@ -382,13 +389,16 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
                         <div className="modal-dialog freq-dialog" onClick={e => e.stopPropagation()}>
                             {/* Avatar */}
                             <div className="freq-detail-avatar">
-                                {char?.avatar ? (
-                                    <img src={char.avatar} alt="" />
-                                ) : (
-                                    <div className="freq-avatar-fallback" style={{ fontSize: "calc(28px*var(--app-text-scale,1))" }}>
-                                        {(char?.name || "?")[0]}
-                                    </div>
-                                )}
+                                {(() => {
+                                    const src = resolveChatAvatar(char?.id);
+                                    return src ? (
+                                        <img src={src} alt="" />
+                                    ) : (
+                                        <div className="freq-avatar-fallback" style={{ fontSize: "calc(28px*var(--app-text-scale,1))" }}>
+                                            {(char?.name || "?")[0]}
+                                        </div>
+                                    );
+                                })()}
                             </div>
 
                             {/* Name */}

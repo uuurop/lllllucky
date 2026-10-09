@@ -25,6 +25,8 @@ export function resolveVoiceConfig(characterId: string, appId?: ContentAppId): V
  * Supported providers:
  * - Minimax: REST API → hex-encoded mp3
  * - OpenAI: REST API → binary audio blob
+ * - ElevenLabs: REST API → binary mp3 (xi-api-key auth, voice id in URL path)
+ * - FishAudio: REST API → binary mp3 (Bearer auth, voice = reference_id)
  */
 export async function synthesizeSpeech(
     text: string,
@@ -41,6 +43,14 @@ export async function synthesizeSpeech(
 
     if (provider === "OpenAI") {
         return synthesizeOpenAI(text, voiceConfig);
+    }
+
+    if (provider === "ElevenLabs") {
+        return synthesizeElevenLabs(text, voiceConfig);
+    }
+
+    if (provider === "FishAudio") {
+        return synthesizeFishAudio(text, voiceConfig);
     }
 
     return null;
@@ -168,6 +178,90 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig): Promise<B
     if (!response.ok) {
         const errText = await response.text().catch(() => "");
         throw new Error(`OpenAI TTS 请求失败 (${response.status}): ${errText}`);
+    }
+
+    const blob = await response.blob();
+    return new Blob([await blob.arrayBuffer()], { type: "audio/mpeg" });
+}
+
+// ── ElevenLabs TTS ──────────────────────────────────
+// POST /v1/text-to-speech/{voice_id}?output_format=... — 鉴权走 xi-api-key 头,
+// 音色 ID 在 URL 路径里(不是 body 字段),模型用 body.model_id。
+
+async function synthesizeElevenLabs(text: string, config: VoiceApiConfig): Promise<Blob | null> {
+    if (!config.apiKey) throw new Error("ElevenLabs API Key 未配置");
+
+    const voiceId = (config.defaultVoice || "").trim();
+    if (!voiceId) throw new Error("ElevenLabs 需要填写默认音色（Voice ID）");
+
+    const baseUrl = (config.baseUrl || "https://api.elevenlabs.io/v1").replace(/\/$/, "");
+    const response = await fetchWithTimeout(
+        `${baseUrl}/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`,
+        {
+            method: "POST",
+            headers: {
+                "xi-api-key": config.apiKey.trim(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                text,
+                model_id: config.model || "eleven_multilingual_v2",
+                voice_settings: {
+                    stability: 0.5,
+                    similarity_boost: 0.75,
+                    use_speaker_boost: true,
+                },
+            }),
+        },
+    );
+
+    if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        throw new Error(`ElevenLabs TTS 请求失败 (${response.status}): ${errText.slice(0, 300)}`);
+    }
+
+    const blob = await response.blob();
+    return new Blob([await blob.arrayBuffer()], { type: "audio/mpeg" });
+}
+
+// ── Fish Audio（鱼声）TTS ────────────────────────────
+// POST /v1/tts — Bearer 鉴权,音色是 body.reference_id(用户在 fish.audio 的
+// 声音模型 ID,需自拟/自选),TTS 模型版本走可选的 model 请求头。
+
+async function synthesizeFishAudio(text: string, config: VoiceApiConfig): Promise<Blob | null> {
+    if (!config.apiKey) throw new Error("Fish Audio API Key 未配置");
+
+    const baseUrl = (config.baseUrl || "https://api.fish.audio/v1").replace(/\/$/, "");
+    const headers: Record<string, string> = {
+        Authorization: `Bearer ${config.apiKey.trim()}`,
+        "Content-Type": "application/json",
+    };
+    const model = (config.model || "").trim();
+    if (model) headers.model = model;
+
+    const body: Record<string, unknown> = {
+        text,
+        format: "mp3",
+        mp3_bitrate: 192,
+    };
+    const referenceId = (config.defaultVoice || "").trim();
+    if (referenceId) body.reference_id = referenceId;
+
+    // prosody.speed 官方范围 0.5–2.0,与现有语速滑杆一致;1.0 时不传,保持默认行为。
+    const speed = typeof config.speechSpeed === "number" && Number.isFinite(config.speechSpeed)
+        ? Math.min(2.0, Math.max(0.5, config.speechSpeed))
+        : 1.0;
+    if (speed !== 1.0) body.prosody = { speed };
+
+    const response = await fetchWithTimeout(`${baseUrl}/tts`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        throw new Error(`Fish Audio TTS 请求失败 (${response.status}): ${errText.slice(0, 300)}`);
     }
 
     const blob = await response.blob();

@@ -70,6 +70,7 @@ export interface AssemblerInput {
     unifiedRecentItems?: UnifiedRecentItem[]; // chronological short-term timeline mixing events and surviving history
     customStickerNames?: string;           // comma-separated custom sticker names for {{customStickers}} macro
     customStickerExample?: string;         // e.g. [表情包:小猫疑惑] for {{stickerExample}} macro
+    avatarCandidatesInfo?: string;         // avatar candidate album summary for {{avatarCandidatesInfo}} macro
     musicLocal?: string;                   // local music titles for {{musicLocal}} macro
     musicCloud?: string;                   // netease playlist summary for {{musicCloud}} macro
     musicOnlineHint?: string;              // online search hint for {{musicOnlineHint}} macro
@@ -666,6 +667,7 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
         engine.periodCareContext = periodCareContext;
         engine.customStickerNames = input.customStickerNames ?? "";
         engine.customStickerExample = input.customStickerExample ?? "";
+        engine.avatarCandidatesInfo = input.avatarCandidatesInfo ?? "";
         engine.musicLocal = input.musicLocal ?? "";
         engine.musicCloud = input.musicCloud ?? "";
         engine.musicOnlineHint = input.musicOnlineHint ?? "";
@@ -1192,6 +1194,9 @@ export function formatRichMediaForHistory(msg: ChatMessage, userName: string, ch
             const pokeTarget = d?.pokeTarget || (msg.role === "assistant" ? userName : charName);
             return `[我拍了拍${pokeTarget}]`;
         }
+        case "avatar_change":
+            // 落库时 content 已是「xx 换上了新头像」这样的系统提示，直接回传让 AI 知道这件事发生过
+            return msg.content || `[换头像:${d?.candidateIndex ?? 1}]`;
         case "sticker":
             return `[表情包:${d?.label ?? "表情"}]`;
         case "quote":

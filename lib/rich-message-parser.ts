@@ -204,6 +204,15 @@ const RICH_PATTERNS: {
         }),
     },
     {
+        // [换头像:候选编号] —— TA 从用户预存的头像候选相册里挑一张主动换上
+        regex: new RegExp(`\\[换头像${C}(\\d{1,2})\\]`),
+        build: (m) => ({
+            content: "",
+            mediaType: "avatar_change" as const,
+            mediaData: { candidateIndex: parseInt(m[1], 10) },
+        }),
+    },
+    {
         regex: new RegExp(`\\[表情包${C}([^\\]]+)\\]`),
         build: (m) => {
             const name = m[1].trim();

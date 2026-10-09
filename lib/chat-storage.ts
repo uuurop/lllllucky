@@ -26,11 +26,22 @@ export function normalizeVisionImagePromptLimit(value: unknown): number {
     return Math.max(0, Math.min(MAX_VISION_IMAGE_PROMPT_LIMIT, Math.floor(parsed)));
 }
 
+export type ChatAvatarCandidate = {
+    id: string;
+    /** 压缩后的 data URL */
+    image: string;
+    addedAt: number;
+};
+
 export type ChatContact = {
     id: string; // unique contact id
     characterId: string; // links to global character in character-storage.ts
     nickname?: string;
     addedAt: string; // ISO date
+    /** 聊天内自定义头像：覆盖角色卡头像，仅影响聊天 app 的展示（压缩后的 data URL） */
+    customAvatar?: string;
+    /** 头像候选相册：用户预存，TA 可通过 [换头像:编号] 指令主动从中挑选 */
+    avatarCandidates?: ChatAvatarCandidate[];
 };
 
 export type ChatSession = {
@@ -117,6 +128,7 @@ export type ChatMessage = {
         | "memory_write_request"
         | "reading_discuss"
         | "system_instruction"
+        | "avatar_change"
         | "group_admin_notice"
         | "media_file"
         | `plugin:${string}`; // 聊天插件自定义消息类型（由注册该 kind 的插件渲染气泡）
@@ -125,6 +137,7 @@ export type ChatMessage = {
     mediaData?: {
         amount?: number;          // 红包/转账金额
         count?: number;           // 红包个数
+        candidateIndex?: number;  // 换头像：候选相册编号（1 起）
         label?: string;           // 红包留言/转账备注/照片描述/位置名/表情名
         status?: "pending" | "opened" | "received" | "declined" | "paid" | "canceled";  // 红包/转账/代付状态
         quoteMessageId?: string;  // 引用消息 ID
@@ -306,6 +319,7 @@ const MEDIA_PREVIEW_MAP: Record<string, string> = {
     app_card: "[应用卡片]",
     tool_notice: "[执行动作]",
     system_instruction: "[系统指令]",
+    avatar_change: "[换头像]",
     media_file: "[文件]",
 };
 
@@ -378,6 +392,10 @@ export function getChatMessagePreview(msg: ChatMessage): string {
         const dSender = (userName && sender === userName) ? "你" : sender;
         const dTarget = (userName && target === userName) ? "你" : target;
         return `${dSender} 拍了拍 ${dTarget}`;
+    }
+    // 换头像：content 已是自然语言（"对方换上了新头像" / "你为对方更换了新头像"）
+    if (msg.mediaType === "avatar_change") {
+        return msg.content?.trim() || "[换头像]";
     }
     if (msg.mediaType === "media_file" && msg.mediaData?.fileType === "image") {
         return msg.mediaData.label ? `[图片] ${msg.mediaData.label}` : "[图片]";
@@ -1030,6 +1048,48 @@ export function removeChatContact(characterId: string) {
     const contacts = loadChatContacts();
     saveChatContacts(contacts.filter(c => c.characterId !== characterId));
     markContactRemoved(characterId);
+}
+
+/** 更新联系人字段（自定义头像、候选相册等），返回更新后的联系人；联系人不存在时返回 null。 */
+export function updateChatContact(
+    characterId: string,
+    updates: Partial<Omit<ChatContact, "id" | "characterId">>,
+): ChatContact | null {
+    const contacts = loadChatContacts();
+    const index = contacts.findIndex(c => c.characterId === characterId);
+    if (index === -1) return null;
+    const next = { ...contacts[index], ...updates };
+    const nextContacts = [...contacts];
+    nextContacts[index] = next;
+    saveChatContacts(nextContacts);
+    // 头像变化要让列表/聊天界面立即刷新
+    if ("customAvatar" in updates || "avatarCandidates" in updates) {
+        emitChatAvatarUpdated(characterId);
+    }
+    return next;
+}
+
+/** 聊天 app 内展示用的角色头像：联系人自定义头像优先，其次角色卡头像。 */
+export function resolveChatAvatar(characterId: string | undefined | null): string {
+    if (!characterId) return "";
+    const contact = loadChatContacts().find(c => c.characterId === characterId);
+    if (contact?.customAvatar) return contact.customAvatar;
+    return loadCharacters().find(c => c.id === characterId)?.avatar || "";
+}
+
+/** 给 LLM 提示词用的头像候选相册描述（{{avatarCandidatesInfo}} 宏）。 */
+export function getAvatarCandidatesInfo(characterId: string): string {
+    const contact = loadChatContacts().find(c => c.characterId === characterId);
+    const count = contact?.avatarCandidates?.length || 0;
+    if (count <= 0) return "";
+    return `共 ${count} 张，编号 1-${count}`;
+}
+
+export const CHAT_AVATAR_UPDATED_EVENT = "chat-avatar-updated";
+
+function emitChatAvatarUpdated(characterId: string): void {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new CustomEvent(CHAT_AVATAR_UPDATED_EVENT, { detail: { characterId } }));
 }
 
 // ── CRUD for Sessions ─────────────────────────

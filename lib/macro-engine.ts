@@ -34,6 +34,7 @@ export class MacroEngine {
     characterWeekday: string = "";
     customStickerNames: string = "";
     customStickerExample: string = "";
+    avatarCandidatesInfo: string = "";
     musicLocal: string = "";
     musicCloud: string = "";
     musicOnlineHint: string = "";
@@ -165,6 +166,7 @@ export class MacroEngine {
         if (body === "characterTimeZone") return this.characterTimeZone || "\x00TRIM\x00";
         if (body === "characterWeekday") return this.characterWeekday || "\x00TRIM\x00";
         if (body === "customStickers") return this.customStickerNames || "\x00TRIM\x00";
+        if (body === "avatarCandidatesInfo") return this.avatarCandidatesInfo || "\x00TRIM\x00";
         if (body === "stickerExample") return this.customStickerExample || "\x00TRIM\x00";
         if (body === "musicLocal") return this.musicLocal || "无";
         if (body === "musicCloud") return this.musicCloud || "无";
