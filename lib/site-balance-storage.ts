@@ -28,6 +28,8 @@ export type SiteBalanceResult =
         rawQuota?: number;
         /** 站点用户名回显 */
         accountName?: string;
+        /** 实际命中的查询方式 */
+        via?: "password" | "token" | "openai-billing";
     }
     | { ok: false; error: string };
 
