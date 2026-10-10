@@ -1,7 +1,7 @@
 // lib/group-chat-engine.ts
 // Group chat engine: single API call for all characters.
 
-import { ChatSession, ChatMessage, loadChatAppSettings, createResponseBatchId, createResponseRoundId, createToolExecutionId, loadChatSessions, getLatestCharacterStateValues, isSessionStreamingEnabled } from "./chat-storage";
+import { ChatSession, ChatMessage, loadChatAppSettings, createResponseBatchId, createResponseRoundId, createToolExecutionId, loadChatSessions, getLatestCharacterStateValues, isSessionStreamingEnabled, getChatNickname } from "./chat-storage";
 import { extractTextToolDirectiveText } from "./text-tool-protocol";
 import type { ApiConfig, PresetConfig, RegexConfig } from "./settings-types";
 import { loadCharacters } from "./character-storage";
@@ -334,6 +334,11 @@ async function buildGroupChatPromptMessages(
 
     const now = new Date();
     const memberTimeContexts: Record<string, ReturnType<typeof buildCharacterTimeContext>> = {};
+    const memberChatNicknames: Record<string, string> = {};
+    for (const charId of participantIds) {
+        const nn = getChatNickname(charId);
+        if (nn) memberChatNicknames[charId] = nn;
+    }
     const memberDataPromises = participantIds.map(async (charId): Promise<GroupMemberData | null> => {
         const character = charMap.get(charId);
         if (!character) return null;
@@ -477,6 +482,7 @@ async function buildGroupChatPromptMessages(
         musicOnlineHint,
         timeContext: groupTimeContext,
         memberTimeContexts,
+        memberChatNicknames,
         promptTimestampOptions: groupPromptTimestampOptions,
         enableVision: config.enableImageRecognition,
         timeAware: loadChatAppSettings().timeAware,

@@ -1110,6 +1110,12 @@ export function getAvatarCandidatesInfo(characterId: string): string {
     return `共 ${count} 张，编号 1-${count}`;
 }
 
+/** 聊天里给角色起的网名（联系人昵称）。只用于提示词注入，让 TA 知道自己被叫什么；无昵称时返回 ""。 */
+export function getChatNickname(characterId: string): string {
+    if (!characterId) return "";
+    return loadChatContacts().find(c => c.characterId === characterId)?.nickname?.trim() || "";
+}
+
 export const CHAT_AVATAR_UPDATED_EVENT = "chat-avatar-updated";
 
 function emitChatAvatarUpdated(characterId: string): void {

@@ -46,11 +46,18 @@ export async function generateChatNickname(
     const currentNickname = loadChatContacts().find(c => c.characterId === characterId)?.nickname?.trim() || "";
     const recentChat = buildRecentChatExcerpt(sessionId);
 
+    // 人设全文（上限 6000 字防超长），并扫描卡里是否已写明微信昵称/网名——有就让模型直接用
+    const personaFull = (character.persona || "").slice(0, 6000);
+    const declaredMatches = personaFull.match(/(?:微信昵称|微信名|微信id|微信号|网名|昵称)\s*[:：=]?\s*[^\s，。；;、\n]{1,30}/gi) || [];
+    const declaredHints = [...new Set(declaredMatches.map(m => m.trim()))].slice(0, 5);
+    if (character.wechatID?.trim()) declaredHints.push(`微信号：${character.wechatID.trim()}`);
+
     const systemPrompt = [
         "你负责给聊天软件里的联系人起「网名/昵称」（显示在消息列表、联系人列表和动态里的名字）。",
         "规则：",
         "- 2~12 个字符，像一个真实用户会用的网名，不是证件名",
         "- 要贴合角色的人设、性格和气质",
+        "- 如果人设卡里已经明确写了微信昵称/网名/微信号，直接原样采用，不要另起",
         "- 可以带少量 emoji 或符号，但不要堆砌",
         "- 只输出昵称本身，不要解释、不要引号、不要任何其他内容",
     ].join("\n");
@@ -58,8 +65,11 @@ export async function generateChatNickname(
     const userSections: string[] = [
         `角色名字：${character.name}`,
         character.personality ? `性格：${character.personality}` : "",
-        `人设：\n${(character.persona || "").slice(0, 800)}`,
+        `人设：\n${personaFull}`,
     ].filter(Boolean);
+    if (declaredHints.length > 0) {
+        userSections.push(`人设卡中疑似已写明的昵称线索（优先采用）：\n${declaredHints.join("\n")}`);
+    }
     if (currentNickname) {
         userSections.push(`TA 现在的昵称是「${currentNickname}」。请结合最近的聊天状态起一个**新的**昵称，可以和当前心境、关系变化呼应，不要原样重复。`);
     }

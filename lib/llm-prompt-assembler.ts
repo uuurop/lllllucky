@@ -71,6 +71,7 @@ export interface AssemblerInput {
     customStickerNames?: string;           // comma-separated custom sticker names for {{customStickers}} macro
     customStickerExample?: string;         // e.g. [表情包:小猫疑惑] for {{stickerExample}} macro
     avatarCandidatesInfo?: string;         // avatar candidate album summary for {{avatarCandidatesInfo}} macro
+    chatNickname?: string;                 // 联系人网名：追加在角色卡末尾让 TA 知道自己的昵称（仅聊天场景传入）
     musicLocal?: string;                   // local music titles for {{musicLocal}} macro
     musicCloud?: string;                   // netease playlist summary for {{musicCloud}} macro
     musicOnlineHint?: string;              // online search hint for {{musicOnlineHint}} macro
@@ -661,7 +662,7 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
         engine.lastUserMessage = history.filter(m => m.role === "user").pop()?.content ?? "";
         engine.lastCharMessage = history.filter(m => m.role === "assistant").pop()?.content ?? "";
         engine.lastMessage = history.length > 0 ? history[history.length - 1].content : "";
-        engine.description = character.persona ?? "";
+        engine.description = (character.persona ?? "") + (input.chatNickname ? `\n你在聊天软件里的网名叫「${input.chatNickname}」。` : "");
         engine.personality = character.personality ?? "";
         engine.persona = userIdentity?.bio ?? "";
         engine.stateStr = stateStr;
@@ -1614,6 +1615,7 @@ export interface GroupAssemblerInput {
     enableVision?: boolean;
     timeContext?: CharacterTimeContext;
     memberTimeContexts?: Record<string, CharacterTimeContext>;
+    memberChatNicknames?: Record<string, string>; // 群成员各自的联系人网名：追加在角色卡末尾让 TA 知道自己的昵称
     promptTimestampOptions?: PromptTimestampOptions;
     timeAware?: boolean;
     tools?: string;
@@ -1859,7 +1861,7 @@ export function assembleGroupPromptPayload(input: GroupAssemblerInput): LLMMessa
             engine,
             input.memberTimeContexts?.[char.id] ?? buildCharacterTimeContext(char.timeZone),
         );
-        engine.description = char.persona ?? "";
+        engine.description = (char.persona ?? "") + (input.memberChatNicknames?.[char.id] ? `\n你在聊天软件里的网名叫「${input.memberChatNicknames[char.id]}」。` : "");
         engine.personality = char.personality ?? "";
         engine.persona = userIdentity?.bio ?? "";
         engine.stateStr = formatStateValuesForPrompt(m.currentStateValues);
