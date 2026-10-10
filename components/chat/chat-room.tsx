@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, Fragment, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChatSession, ChatMessage, CHAT_APP_SETTINGS_UPDATED_EVENT, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT, CHAT_LOAD_MORE_MESSAGE_COUNT, CHAT_REQUEST_REPLY_EVENT, loadChatAppSettings, loadChatMessages, loadChatContacts, loadChatSessions, saveChatSessions, pushChatMessage, updateChatMessage, deleteChatMessage, deleteChatMessagesFrom, deleteChatMessagesByIds, retractChatMessage, editChatMessage, updateMessageMediaData, replaceResponseBatchWithParts, replaceGroupResponseRound, isReadingDiscussMessage, isSystemInstructionMessage, createResponseBatchId, createResponseRoundId, getLatestStateValues, getLatestCharacterStateValues, compareChatMessages, isSessionStreamingEnabled, resolveChatAvatar, CHAT_AVATAR_UPDATED_EVENT } from "@/lib/chat-storage";
+import { ChatSession, ChatMessage, CHAT_APP_SETTINGS_UPDATED_EVENT, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT, CHAT_LOAD_MORE_MESSAGE_COUNT, CHAT_REQUEST_REPLY_EVENT, loadChatAppSettings, loadChatMessages, loadChatContacts, loadChatSessions, saveChatSessions, pushChatMessage, updateChatMessage, deleteChatMessage, deleteChatMessagesFrom, deleteChatMessagesByIds, retractChatMessage, editChatMessage, updateMessageMediaData, replaceResponseBatchWithParts, replaceGroupResponseRound, isReadingDiscussMessage, isSystemInstructionMessage, createResponseBatchId, createResponseRoundId, getLatestStateValues, getLatestCharacterStateValues, compareChatMessages, isSessionStreamingEnabled, resolveChatAvatar, resolveChatDisplayName, CHAT_AVATAR_UPDATED_EVENT } from "@/lib/chat-storage";
 import { cleanStreamText, splitStreamPreviewSegments, stripLiteralTexts, stripXmlTagBlocks } from "@/lib/stream-preview";
 import type { StateValue } from "@/lib/chat-storage";
 import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
@@ -3423,6 +3423,14 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         sendRichMessage("image", { label: desc, ...(candidateIndex ? { candidateIndex } : {}) }, "", imageDataUrl);
     };
 
+    // 照片墙多选：逐张发出（每张都是独立 image 消息，附同一句描述），全部进头像候选相册
+    const sendPhotosWithAvatarCandidates = async (desc: string, images: string[]) => {
+        for (const imageDataUrl of images) {
+            // 顺序 await，保持消息顺序
+            await sendPhotoWithAvatarCandidate(desc, imageDataUrl);
+        }
+    };
+
     // ── Rich media send helpers ──
     const getMoneyMediaAmount = (mediaData: ChatMessage["mediaData"]): number => {
         const amount = Number(mediaData?.amount ?? 0);
@@ -5519,7 +5527,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         {offlineMode ? "线下 · " : ""}
                         {session.isGroup
                             ? `${session.groupName || "群聊"}(${(session.participantIds?.length || 0) + (session.isSpectator ? 0 : 1)})`
-                            : (session.alias || character?.name || `User_${session.contactId.slice(-4)}`)}
+                            : (resolveChatDisplayName(session.contactId, { alias: session.alias }) || `User_${session.contactId.slice(-4)}`)}
                         {(isGenerating || isOfflineGenerating) && (
                             <span className="chat-typing-indicator">
                                 {offlineMode ? "线下生成中" : "对方正在输入"}<span className="chat-typing-dots"><i/><i/><i/></span>
@@ -6489,7 +6497,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             )}
             {richModal === "photo" && (
                 <PhotoInputModal
-                    onSend={(desc, imageDataUrl) => { setRichModal(null); void sendPhotoWithAvatarCandidate(desc, imageDataUrl); }}
+                    onSend={(desc, images) => { setRichModal(null); void sendPhotosWithAvatarCandidates(desc, images); }}
                     onClose={() => setRichModal(null)}
                 />
             )}

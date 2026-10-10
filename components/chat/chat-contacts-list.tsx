@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, useSyncExternalStore } from "react";
-import { loadChatContacts, ChatContact, createOrGetSession, ChatSession, addChatContact, pushChatMessage, loadChatMessages, resolveChatAvatar, CHAT_AVATAR_UPDATED_EVENT } from "@/lib/chat-storage";
+import { loadChatContacts, ChatContact, createOrGetSession, ChatSession, addChatContact, pushChatMessage, loadChatMessages, resolveChatAvatar, resolveChatDisplayName, CHAT_AVATAR_UPDATED_EVENT } from "@/lib/chat-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { PENDING_REPLY_PREFIX } from "@/lib/friend-request-engine";
 import { loadCharacters } from "@/lib/character-storage";
@@ -106,7 +106,7 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
             ...c,
             char: chars.find(ch => ch.id === c.characterId)
         })).filter(c => c.char);
-        enriched.sort((a, b) => (a.char?.name || "").localeCompare(b.char?.name || ""));
+        enriched.sort((a, b) => resolveChatDisplayName(a.char!.id).localeCompare(resolveChatDisplayName(b.char!.id)));
         setContacts(enriched);
 
         const posts = loadMomentPosts();
@@ -135,11 +135,11 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
     const { grouped, indexLetters } = useMemo(() => {
         const keyword = deferredContactFilter.trim().toLowerCase();
         const filtered = keyword
-            ? contacts.filter(c => (c.char?.name || "").toLowerCase().includes(keyword))
+            ? contacts.filter(c => resolveChatDisplayName(c.char!.id).toLowerCase().includes(keyword))
             : contacts;
         const map: Record<string, typeof contacts> = {};
         for (const c of filtered) {
-            const letter = getInitial(c.char?.name || "");
+            const letter = getInitial(resolveChatDisplayName(c.char!.id));
             (map[letter] ??= []).push(c);
         }
         // Sort keys: A-Z first, then #
@@ -293,7 +293,7 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
                                             </div>
                                             <div className="flex-1 overflow-hidden h-[48px] flex flex-col justify-center gap-1">
                                                 <div className="ts-16 font-medium text-[var(--c-text-title)] truncate">
-                                                    {char.name || "UNNAMED"}
+                                                    {resolveChatDisplayName(char.id) || "UNNAMED"}
                                                 </div>
                                                 <div className="ts-13 text-[var(--c-text)] opacity-80 truncate font-normal">
                                                     {latestPost[char.id] || "暂无动态"}

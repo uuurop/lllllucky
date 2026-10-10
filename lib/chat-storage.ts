@@ -1065,11 +1065,33 @@ export function updateChatContact(
     const nextContacts = [...contacts];
     nextContacts[index] = next;
     saveChatContacts(nextContacts);
-    // 头像变化要让列表/聊天界面立即刷新
-    if ("customAvatar" in updates || "avatarCandidates" in updates) {
+    // 头像/昵称变化要让列表/聊天界面立即刷新
+    if ("customAvatar" in updates || "avatarCandidates" in updates || "nickname" in updates) {
         emitChatAvatarUpdated(characterId);
     }
     return next;
+}
+
+/**
+ * 聊天 app 内展示用的角色名字，优先级：会话备注(alias) > 联系人昵称(nickname) > 角色卡名字。
+ * - alias 传入字符串时直接使用（含空串=显式无备注，不再回查会话）；
+ * - alias 不传时自动回查该角色私聊会话的备注。
+ * 都没有时返回 ""，由调用方决定兜底文案。
+ */
+export function resolveChatDisplayName(
+    characterId: string | undefined | null,
+    options?: { alias?: string | null },
+): string {
+    if (!characterId) return "";
+    const alias = options?.alias;
+    if (typeof alias === "string" && alias.trim()) return alias.trim();
+    if (alias === undefined) {
+        const session = loadChatSessions().find(s => !s.isGroup && s.contactId === characterId);
+        if (session?.alias?.trim()) return session.alias.trim();
+    }
+    const contact = loadChatContacts().find(c => c.characterId === characterId);
+    if (contact?.nickname?.trim()) return contact.nickname.trim();
+    return loadCharacters().find(c => c.id === characterId)?.name || "";
 }
 
 /** 聊天 app 内展示用的角色头像：联系人自定义头像优先，其次角色卡头像。 */

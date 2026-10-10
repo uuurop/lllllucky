@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useSyncExternalStore } from "react";
 import { ChevronLeft } from "lucide-react";
-import { loadChatSessions, loadChatContacts, ChatSession, createOrGetSession, createGroupSession, pushChatMessage, addChatContact, loadChatMessages, getLastVisibleSessionMessage, getChatMessagePreview, resolveChatAvatar, CHAT_AVATAR_UPDATED_EVENT } from "@/lib/chat-storage";
+import { loadChatSessions, loadChatContacts, ChatSession, createOrGetSession, createGroupSession, pushChatMessage, addChatContact, loadChatMessages, getLastVisibleSessionMessage, getChatMessagePreview, resolveChatAvatar, resolveChatDisplayName, CHAT_AVATAR_UPDATED_EVENT } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { Character } from "@/lib/character-types";
 import { resolveUserIdentity } from "@/lib/settings-storage";
@@ -282,7 +282,6 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
                 <div className="px-5 pt-2 flex flex-col">
                     {(() => {
                             const contactIds = new Set(loadChatContacts().map(c => c.characterId));
-                            const allChars = loadCharacters();
                             const keyword = listFilter.trim().toLowerCase();
                             const showMascot = mascotSettings.chatEnabled
                                 && listTab !== "group"
@@ -295,7 +294,7 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
                                 if (listTab === "group" && !s.isGroup) return false;
                                 if (!keyword) return true;
                                 if (s.isGroup) return (s.groupName || "群聊").toLowerCase().includes(keyword);
-                                const name = s.alias || allChars.find(c => c.id === s.contactId)?.name || "";
+                                const name = resolveChatDisplayName(s.contactId, { alias: s.alias });
                                 return name.toLowerCase().includes(keyword);
                             })
                             .sort((a, b) => {
@@ -807,7 +806,7 @@ function SessionItem({ session, onSelect, isPinned }: { session: ChatSession, on
             <div className="flex-1 overflow-hidden h-[48px] flex flex-col justify-center gap-1">
                 <div className="flex justify-between items-center">
                     <span className="ts-16 font-medium text-[var(--c-text-title)] truncate">
-                        {isGroup ? (session.groupName || "群聊") : (session.alias || character?.name || `User_${session.contactId.slice(-4)}`)}
+                        {isGroup ? (session.groupName || "群聊") : (resolveChatDisplayName(session.contactId, { alias: session.alias }) || `User_${session.contactId.slice(-4)}`)}
                     </span>
                     <span className="ts-12 text-[var(--c-icon)] font-medium">
                         {formatChatUiTime(displayTime)}

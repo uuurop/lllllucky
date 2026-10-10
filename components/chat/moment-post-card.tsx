@@ -23,7 +23,7 @@ import { hasCharacterReferenceImage } from "@/lib/image-generation-service";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 import { Trash2, MoreHorizontal, MapPin, Heart, MessageCircle, Pencil } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui";
-import { resolveChatAvatar } from "@/lib/chat-storage";
+import { resolveChatAvatar, resolveChatDisplayName } from "@/lib/chat-storage";
 
 type Props = {
     post: MomentPost;
@@ -102,7 +102,7 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
     const userIdentity = resolveUserIdentity(contextCharId, "chat");
 
     const getCharName = (charId: string): string => {
-        return chars.find(c => c.id === charId)?.name ?? "未知";
+        return resolveChatDisplayName(charId) || chars.find(c => c.id === charId)?.name || "未知";
     };
 
     const getCharAvatar = (charId: string): string | null => {

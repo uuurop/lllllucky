@@ -16,6 +16,8 @@ import {
     removeChatContact,
     normalizeVisionImagePromptLimit,
     resolveChatAvatar,
+    resolveChatDisplayName,
+    updateChatContact,
     CHAT_AVATAR_UPDATED_EVENT,
     MAX_VISION_IMAGE_PROMPT_LIMIT,
     type ChatMessage,
@@ -41,6 +43,7 @@ import {
     pruneExpiredGroupMutes,
     type GroupAdminAction,
 } from "@/lib/group-admin";
+import { generateChatNickname } from "@/lib/chat-nickname";
 import { clearChatOfflineTurns } from "@/lib/chat-offline-storage";
 import { removeChatSessionCompletely } from "@/lib/chat-session-remove";
 import { triggerDeleteFriendReaction } from "@/lib/friend-request-engine";
@@ -309,6 +312,12 @@ export function ChatSettingsPanel({
 }: ChatSettingsPanelProps) {
     const [backgroundImage, setBackgroundImage] = useState<string>(session.backgroundImage || "");
     const [alias, setAlias] = useState<string>(session.alias || "");
+    // 昵称（网名）：存在联系人上，优先级 备注 > 昵称 > 角色卡名字
+    const [nickname, setNickname] = useState<string>(() =>
+        loadChatContacts().find(c => c.characterId === session.contactId)?.nickname || "");
+    const [editingNickname, setEditingNickname] = useState(false);
+    const [nicknameDraft, setNicknameDraft] = useState("");
+    const [nicknameGenerating, setNicknameGenerating] = useState(false);
     const [videoBackground, setVideoBackground] = useState<string>(session.videoBackground || "");
     const [voiceBackground, setVoiceBackground] = useState<string>(session.voiceBackground || "");
     const [isPinned, setIsPinned] = useState(session.isPinned || false);
@@ -627,7 +636,25 @@ export function ChatSettingsPanel({
 
     const characterName = session.isGroup
         ? (groupName || session.groupName || "群聊")
-        : (alias || character?.name || `User_${session.contactId.slice(-4)}`);
+        : (alias || nickname || character?.name || `User_${session.contactId.slice(-4)}`);
+
+    // AI 自取昵称：读取人设 + 最近聊天记录生成，写回联系人并立即生效
+    const handleGenerateNickname = async () => {
+        if (nicknameGenerating || session.isGroup) return;
+        setNicknameGenerating(true);
+        try {
+            const result = await generateChatNickname(session.contactId, session.id);
+            if (result.ok) {
+                setNickname(result.nickname);
+            } else {
+                window.alert(result.error);
+            }
+        } catch (err) {
+            window.alert(err instanceof Error ? err.message : "生成失败，请稍后再试");
+        } finally {
+            setNicknameGenerating(false);
+        }
+    };
 
     // Group members
     const groupChars = session.isGroup
@@ -942,6 +969,29 @@ export function ChatSettingsPanel({
             <div className="page-menu chat-info-menu">
                 {/* Basic Info & Search */}
                 <div className="menu-group">
+                    {!session.isGroup && (
+                        <button className="menu-item" onClick={() => { setNicknameDraft(nickname); setEditingNickname(true); }}>
+                            <ChatInfoIcon icon={Smile} color={CONTENT_APP_ACCENTS.story} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">昵称</span>
+                                <span className="menu-desc">TA 的网名，备注优先于昵称</span>
+                            </div>
+                            <div className="menu-right">
+                                <span className="menu-desc mr-1">{nickname || "未设置"}</span>
+                                <span
+                                    role="button"
+                                    tabIndex={0}
+                                    title="AI 自取昵称"
+                                    style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 14, marginRight: 4, color: "var(--c-icon)", cursor: nicknameGenerating ? "default" : "pointer", opacity: nicknameGenerating ? 0.5 : 1 }}
+                                    onClick={e => { e.stopPropagation(); void handleGenerateNickname(); }}
+                                    onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); void handleGenerateNickname(); } }}
+                                >
+                                    <Sparkles size={16} className={nicknameGenerating ? "animate-spin" : undefined} />
+                                </span>
+                                <ChevronRight size={16} />
+                            </div>
+                        </button>
+                    )}
                     <button className="menu-item" onClick={() => setEditingAlias(true)}>
                         <ChatInfoIcon icon={MessageSquare} color={CONTENT_APP_ACCENTS.chat} />
                         <div className="menu-label-group"><span className="menu-label">{session.isGroup ? "群聊名称" : "设置备注"}</span></div>
@@ -1494,6 +1544,30 @@ export function ChatSettingsPanel({
                             </div>
                         )}
                         <button className="ui-btn ui-btn-ghost w-full" onClick={() => setShowInvitePicker(false)}>取消</button>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal: Nickname */}
+            {editingNickname && !session.isGroup && (
+                <div className="modal-overlay">
+                    <div className="modal-dialog">
+                        <div className="ts-17 font-semibold text-center text-[var(--c-text)]">修改昵称</div>
+                        <Input
+                            type="text"
+                            value={nicknameDraft}
+                            onChange={e => setNicknameDraft(e.target.value)}
+                            placeholder={character?.name || "输入昵称"}
+                        />
+                        <div className="flex gap-3 w-full">
+                            <button onClick={() => setEditingNickname(false)} className="ui-btn ui-btn-ghost flex-1">取消</button>
+                            <button onClick={() => {
+                                const next = nicknameDraft.trim();
+                                updateChatContact(session.contactId, { nickname: next || undefined });
+                                setNickname(next);
+                                setEditingNickname(false);
+                            }} className="ui-btn ui-btn-success flex-1">保存</button>
+                        </div>
                     </div>
                 </div>
             )}
