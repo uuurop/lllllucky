@@ -3408,11 +3408,17 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         await triggerReply();
     };
 
-    // 拉黑/解除拉黑：写隐藏系统指令让 TA 知道状态变化；拉黑时立即触发一轮反应
+    // 拉黑/解除拉黑：留一条可见系统消息（可长按删除上下文）+ 隐藏指令让 TA 知道状态变化；拉黑时立即触发一轮反应
     const requestBlacklistReaction = async (action: "block" | "unblock") => {
         if (session.isGroup) return;
         if (action === "unblock") {
-            // 解除拉黑：只留记录，TA 下次聊天自然知道，不打断当前界面
+            // 可见记录：方便用户之后删掉这段上下文；同时进 LLM 历史
+            const sysMsg = pushChatMessage({
+                sessionId: session.id,
+                role: "system",
+                content: "你已解除对对方的拉黑",
+            });
+            setMessages(prev => [...prev, sysMsg]);
             pushChatMessage({
                 sessionId: session.id,
                 role: "system",
@@ -3423,6 +3429,13 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             return;
         }
         if (isGeneratingRef.current) return;
+        // 可见记录：拉黑动作本身
+        const sysMsg = pushChatMessage({
+            sessionId: session.id,
+            role: "system",
+            content: "你已拉黑对方，对方的消息将被拒收",
+        });
+        setMessages(prev => [...prev, sysMsg]);
         // 判断用户有没有提前说过要拉黑：最近 15 条用户消息里出现相关词就算预告过
         const recentUserText = messages
             .filter(m => m.role === "user" && !m.mediaData?.hiddenInChat)
@@ -5959,11 +5972,13 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     const isMediaBubble = (renderMsg.mediaType && CHAT_MEDIA_BUBBLE_TYPES.has(renderMsg.mediaType)) || isStandaloneHtmlPreview;
                     // Empty bubble: no visible content AND no visual media AND no folded panel.
                     const isEmptyBubble = !isVisualMedia && !visibleContent && uiRole(msg) !== "system" && !hasFoldedPanel;
-                    // 拉黑期间 TA 发来的消息：旁边挂微信同款红色感叹号（只标拉黑后收到的）
+                    // 拉黑期间 TA 发来的消息：旁边挂微信同款红色感叹号（只标拉黑后收到的正常气泡）
                     const blockedSinceMs = session.blacklistedAt ? new Date(session.blacklistedAt).getTime() : NaN;
                     const showBlockedBadge = !session.isGroup
                         && !!session.isBlacklisted
                         && msg.role === "assistant"
+                        && !isSilentThought
+                        && !isEmptyBubble
                         && Number.isFinite(blockedSinceMs)
                         && new Date(msg.createdAt).getTime() >= blockedSinceMs
                         && !msg.mediaData?.hiddenInChat;
@@ -6196,12 +6211,12 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                         </div>}
                                         {showBlockedBadge && (
                                             <div
-                                                className="self-center shrink-0 w-[20px] h-[20px] rounded-full flex items-center justify-center"
+                                                className="self-center shrink-0 w-[16px] h-[16px] rounded-full flex items-center justify-center"
                                                 style={{ background: "#F43530" }}
                                                 title="对方已被你拉黑，消息被拒收"
                                                 aria-label="对方已被你拉黑，消息被拒收"
                                             >
-                                                <span className="text-white ts-11 font-bold leading-none">!</span>
+                                                <span className="text-white text-[10px] font-bold leading-none" style={{ marginTop: -1 }}>!</span>
                                             </div>
                                         )}
                                         {msg.role !== "user" && !isSilentThought && !isEmptyBubble && hasFoldedPanel && (
