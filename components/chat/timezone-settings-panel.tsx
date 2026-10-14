@@ -275,7 +275,7 @@ export function TimezoneSettingsPanel({ onBack, scope = "contacts", variant = "p
                             <X size={16} />
                         </button>
                     </div>
-                    <div className="hide-scrollbar" style={{ overflowY: "auto", minHeight: 0 }}>
+                    <div className="calendar-tz-body hide-scrollbar">
                         {body}
                     </div>
                 </div>
