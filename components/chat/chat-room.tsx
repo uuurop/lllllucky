@@ -3408,6 +3408,40 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         await triggerReply();
     };
 
+    // 拉黑/解除拉黑：写隐藏系统指令让 TA 知道状态变化；拉黑时立即触发一轮反应
+    const requestBlacklistReaction = async (action: "block" | "unblock") => {
+        if (session.isGroup) return;
+        if (action === "unblock") {
+            // 解除拉黑：只留记录，TA 下次聊天自然知道，不打断当前界面
+            pushChatMessage({
+                sessionId: session.id,
+                role: "system",
+                mediaType: "system_instruction",
+                content: "（系统提示：对方刚刚解除了对你的拉黑，你发的消息恢复正常，不会再出现红色感叹号。）",
+                mediaData: { hiddenInChat: true },
+            });
+            return;
+        }
+        if (isGeneratingRef.current) return;
+        // 判断用户有没有提前说过要拉黑：最近 15 条用户消息里出现相关词就算预告过
+        const recentUserText = messages
+            .filter(m => m.role === "user" && !m.mediaData?.hiddenInChat)
+            .slice(-15)
+            .map(m => m.content || "")
+            .join("\n");
+        const warned = /拉黑|黑名单|屏蔽/.test(recentUserText);
+        pushChatMessage({
+            sessionId: session.id,
+            role: "system",
+            mediaType: "system_instruction",
+            content: warned
+                ? "（系统提示：对方之前说过要拉黑你，现在真的把你拉黑了。你发的消息对方仍然能看到，但每条消息旁边都会出现红色感叹号，表示对方已拒收。请直接给出你知道自己被拉黑后的反应。）"
+                : "（系统提示：对方刚刚把你拉黑了，但你还不知道这件事。请先像往常一样给对方发消息，随后你发现消息被拒收（旁边出现红色感叹号），再给出你发现被拉黑后的反应。）",
+            mediaData: { hiddenInChat: true },
+        });
+        await triggerReply();
+    };
+
     // 私聊里发实拍图：自动把图压缩后收入 TA 的头像候选相册，
     // 消息带上候选编号，TA 看到喜欢的可以直接用 [换头像:编号] 换上
     const sendPhotoWithAvatarCandidate = async (desc: string, imageDataUrl?: string) => {
@@ -5925,6 +5959,14 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     const isMediaBubble = (renderMsg.mediaType && CHAT_MEDIA_BUBBLE_TYPES.has(renderMsg.mediaType)) || isStandaloneHtmlPreview;
                     // Empty bubble: no visible content AND no visual media AND no folded panel.
                     const isEmptyBubble = !isVisualMedia && !visibleContent && uiRole(msg) !== "system" && !hasFoldedPanel;
+                    // 拉黑期间 TA 发来的消息：旁边挂微信同款红色感叹号（只标拉黑后收到的）
+                    const blockedSinceMs = session.blacklistedAt ? new Date(session.blacklistedAt).getTime() : NaN;
+                    const showBlockedBadge = !session.isGroup
+                        && !!session.isBlacklisted
+                        && msg.role === "assistant"
+                        && Number.isFinite(blockedSinceMs)
+                        && new Date(msg.createdAt).getTime() >= blockedSinceMs
+                        && !msg.mediaData?.hiddenInChat;
                     const selectableStoredId = getSelectableStoredMessageId(msg);
                     const isMultiSelectable = isMultiSelectMode && !!selectableStoredId && !hiddenEmpty;
                     const isMultiSelected = !!selectableStoredId && selectedMessageIds.has(selectableStoredId);
@@ -6152,6 +6194,16 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                             />
                                         </div>
                                         </div>}
+                                        {showBlockedBadge && (
+                                            <div
+                                                className="self-center shrink-0 w-[20px] h-[20px] rounded-full flex items-center justify-center"
+                                                style={{ background: "#F43530" }}
+                                                title="对方已被你拉黑，消息被拒收"
+                                                aria-label="对方已被你拉黑，消息被拒收"
+                                            >
+                                                <span className="text-white ts-11 font-bold leading-none">!</span>
+                                            </div>
+                                        )}
                                         {msg.role !== "user" && !isSilentThought && !isEmptyBubble && hasFoldedPanel && (
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); setExpandedThinkingId(prev => prev === msg.id ? null : msg.id); }}
@@ -6407,6 +6459,11 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         onRequestAvatarPick={(candidateCount) => {
                             setShowSettings(false);
                             void requestAvatarPick(candidateCount);
+                        }}
+                        onRequestBlacklistReaction={(action) => {
+                            // 拉黑：关掉设置页，让用户直接看到 TA 的反应；解除拉黑不打扰
+                            if (action === "block") setShowSettings(false);
+                            void requestBlacklistReaction(action);
                         }}
                         onToolHistoryCleared={syncMessagesFromStorage}
                         offlineHistoryBusy={isOfflineGenerating}

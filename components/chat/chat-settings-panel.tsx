@@ -57,7 +57,7 @@ import { downloadFile } from "@/lib/download-utils";
 import { getSchemes, saveScheme, deleteScheme, type CSSScheme } from "@/lib/css-scheme-storage";
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { KeyboardAutoSendDebounceItem } from "@/components/chat/keyboard-auto-send-debounce-item";
-import { ChevronRight, Check, Image as ImageIcon, ImagePlus, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Coins, Layers, type LucideIcon } from "lucide-react";
+import { ChevronRight, Check, Image as ImageIcon, ImagePlus, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Coins, Layers, Ban, type LucideIcon } from "lucide-react";
 import { CURRENCIES, FOREIGN_CURRENCY_CODES, type CurrencyCode } from "@/lib/exchange-rate";
 import {
     BINDING_PROFILES_UPDATED_EVENT,
@@ -212,6 +212,8 @@ type ChatSettingsPanelProps = {
     onJumpToMessage?: (messageId: string) => void;
     /** 「让 TA 自己挑头像」：由 chat-room 写入系统指令并触发一轮 AI 回复 */
     onRequestAvatarPick?: (candidateCount: number) => void;
+    /** 拉黑/解除拉黑：block 时由 chat-room 写入系统指令并触发 TA 的被拉黑反应 */
+    onRequestBlacklistReaction?: (action: "block" | "unblock") => void;
     onDeleteFriend?: () => void;
     onSessionDeleted?: () => void;
     onToolHistoryCleared?: () => void;
@@ -315,6 +317,7 @@ export function ChatSettingsPanel({
     onClose,
     onJumpToMessage,
     onRequestAvatarPick,
+    onRequestBlacklistReaction,
     onDeleteFriend,
     onSessionDeleted,
     onToolHistoryCleared,
@@ -338,6 +341,9 @@ export function ChatSettingsPanel({
     const [bindingProfiles, setBindingProfiles] = useState<BindingProfile[]>(() => loadBindingProfiles());
     const [bindingTick, setBindingTick] = useState(0);
     const [showProfilePicker, setShowProfilePicker] = useState(false);
+    // 拉黑：开关状态跟随会话，打开开关前先弹确认框
+    const [isBlacklisted, setIsBlacklisted] = useState(!!session.isBlacklisted);
+    const [showConfirmBlacklist, setShowConfirmBlacklist] = useState(false);
     useEffect(() => {
         const onUpdated = () => { setBindingProfiles(loadBindingProfiles()); setBindingTick(t => t + 1); };
         window.addEventListener(BINDING_PROFILES_UPDATED_EVENT, onUpdated);
@@ -1475,6 +1481,30 @@ export function ChatSettingsPanel({
                 {/* Destructive Actions */}
                 <div className="menu-group">
                     {!session.isGroup && (
+                    <div className="menu-item" style={{ cursor: "default" }}>
+                        <ChatInfoIcon icon={Ban} color="var(--c-danger)" />
+                        <div className="menu-label-group">
+                            <span className="menu-label">拉黑</span>
+                            <span className="menu-desc">{isBlacklisted ? "已拉黑，TA 的消息会带红色感叹号" : "拉黑后 TA 会发现自己被拉黑"}</span>
+                        </div>
+                        <div className="menu-right">
+                            <Toggle
+                                checked={isBlacklisted}
+                                onChange={c => {
+                                    if (c) {
+                                        // 先确认，确定后才真正拉黑
+                                        setShowConfirmBlacklist(true);
+                                    } else {
+                                        setIsBlacklisted(false);
+                                        updateSession({ isBlacklisted: false });
+                                        onRequestBlacklistReaction?.("unblock");
+                                    }
+                                }}
+                            />
+                        </div>
+                    </div>
+                    )}
+                    {!session.isGroup && (
                     <button className="menu-item" onClick={() => setShowConfirmDelete(true)}>
                         <ChatInfoIcon icon={UserMinus} color="var(--c-danger)" />
                         <div className="menu-label-group"><span className="menu-label menu-label-danger">删除好友</span></div>
@@ -2013,6 +2043,25 @@ export function ChatSettingsPanel({
                     cancelLabel="取消"
                     onConfirm={handleDeleteSession}
                     onCancel={() => setShowConfirmDeleteSession(false)}
+                />
+            )}
+
+            {/* Modal: Confirm Blacklist */}
+            {showConfirmBlacklist && (
+                <ConfirmDialog
+                    title="是否加入黑名单"
+                    message="拉黑后 TA 仍然能给你发消息，但消息旁边会显示红色感叹号；TA 会知道自己被你拉黑了。"
+                    icon={Ban}
+                    variant="danger"
+                    confirmLabel="确定"
+                    cancelLabel="取消"
+                    onConfirm={() => {
+                        setIsBlacklisted(true);
+                        updateSession({ isBlacklisted: true, blacklistedAt: new Date().toISOString() });
+                        setShowConfirmBlacklist(false);
+                        onRequestBlacklistReaction?.("block");
+                    }}
+                    onCancel={() => setShowConfirmBlacklist(false)}
                 />
             )}
 

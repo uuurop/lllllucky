@@ -1925,6 +1925,7 @@ export async function buildChatPromptMessages(
         avatarCandidatesInfo: getAvatarCandidatesInfo(character.id),
         chatNickname: session.isGroup ? undefined : getChatNickname(character.id),
         chatCurrency: session.isGroup ? undefined : resolveContactCurrency(character.id),
+        chatBlacklisted: session.isGroup ? undefined : (session.isBlacklisted || undefined),
         musicLocal,
         musicCloud,
         musicOnlineHint,

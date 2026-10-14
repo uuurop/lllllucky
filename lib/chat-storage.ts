@@ -61,6 +61,8 @@ export type ChatSession = {
     videoBackground?: string;
     voiceBackground?: string;
     isBlacklisted?: boolean;
+    /** 拉黑时间点（ISO）：拉黑后收到的消息旁边显示红色感叹号；解除时保留以便回看 */
+    blacklistedAt?: string;
     customCSS?: string;
     isMuted?: boolean;
     bilingualTranslationEnabled?: boolean;
