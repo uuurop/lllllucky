@@ -17,6 +17,7 @@ import { formatCharacterRelationsForPrompt } from "./character-world-storage";
 import { buildCharacterTimeContext, buildGroupTimeContext, type CharacterTimeContext } from "./character-time";
 import { formatShoppingPaymentRequestHistory } from "./shopping-payment-request";
 import { buildGroupAdminBracketText } from "./group-admin";
+import { CURRENCIES, type CurrencyCode } from "./exchange-rate";
 
 export type LLMMessageRole = "system" | "user" | "assistant" | "tool";
 export type LLMToolCallPayload = { id: string; name: string; args: Record<string, unknown>; thoughtSignature?: string };
@@ -72,6 +73,7 @@ export interface AssemblerInput {
     customStickerExample?: string;         // e.g. [表情包:小猫疑惑] for {{stickerExample}} macro
     avatarCandidatesInfo?: string;         // avatar candidate album summary for {{avatarCandidatesInfo}} macro
     chatNickname?: string;                 // 联系人网名：追加在角色卡末尾让 TA 知道自己的昵称（仅聊天场景传入）
+    chatCurrency?: CurrencyCode;           // 联系人计价货币：非人民币时告诉 TA 红包/转账按当地货币计价（仅私聊传入）
     musicLocal?: string;                   // local music titles for {{musicLocal}} macro
     musicCloud?: string;                   // netease playlist summary for {{musicCloud}} macro
     musicOnlineHint?: string;              // online search hint for {{musicOnlineHint}} macro
@@ -662,7 +664,11 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
         engine.lastUserMessage = history.filter(m => m.role === "user").pop()?.content ?? "";
         engine.lastCharMessage = history.filter(m => m.role === "assistant").pop()?.content ?? "";
         engine.lastMessage = history.length > 0 ? history[history.length - 1].content : "";
-        engine.description = (character.persona ?? "") + (input.chatNickname ? `\n你在聊天软件里的网名叫「${input.chatNickname}」。` : "");
+        engine.description = (character.persona ?? "")
+            + (input.chatNickname ? `\n你在聊天软件里的网名叫「${input.chatNickname}」。` : "")
+            + (input.chatCurrency && input.chatCurrency !== "CNY"
+                ? `\n你所在地区使用${CURRENCIES[input.chatCurrency].name}（${input.chatCurrency}），发红包/转账/代付时金额一律以${input.chatCurrency}计价。`
+                : "");
         engine.personality = character.personality ?? "";
         engine.persona = userIdentity?.bio ?? "";
         engine.stateStr = stateStr;

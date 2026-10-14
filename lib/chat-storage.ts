@@ -9,6 +9,7 @@ import {
 } from "./chat-db";
 import { resolveUserIdentity } from "./settings-storage";
 import { loadCharacters } from "./character-storage";
+import { currencyFromTimeZone, isCurrencyCode, type CurrencyCode } from "./exchange-rate";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { emitChatPluginEvent, runChatPluginTransformSync } from "./chat-plugin-hooks";
 import { parseAIResponse } from "./rich-message-parser";
@@ -42,6 +43,8 @@ export type ChatContact = {
     customAvatar?: string;
     /** 头像候选相册：用户预存，TA 可通过 [换头像:编号] 指令主动从中挑选 */
     avatarCandidates?: ChatAvatarCandidate[];
+    /** 红包/转账计价货币（CNY/KRW/JPY/USD/EUR）；未设置时按角色时区推导 */
+    currency?: string;
 };
 
 export type ChatSession = {
@@ -135,7 +138,9 @@ export type ChatMessage = {
     origin?: "chat" | "reading_discuss" | "custom_app" | "custom_app_background";
     mediaUrl?: string;
     mediaData?: {
-        amount?: number;          // 红包/转账金额
+        amount?: number;          // 红包/转账金额（按 currency 计价，缺省人民币元）
+        currency?: string;        // 计价货币（CNY/KRW/JPY/USD/EUR），缺省见 resolveMessageCurrency
+        cnyAmount?: number;       // 用户发送时实际扣款的人民币金额（外币消息退款/对账用）
         count?: number;           // 红包个数
         candidateIndex?: number;  // 换头像：候选相册编号（1 起）
         hiddenInChat?: boolean;   // 不在聊天界面/会话预览/搜索中渲染，但仍进 LLM 历史（引导类系统指令用）
@@ -1065,8 +1070,8 @@ export function updateChatContact(
     const nextContacts = [...contacts];
     nextContacts[index] = next;
     saveChatContacts(nextContacts);
-    // 头像/昵称变化要让列表/聊天界面立即刷新
-    if ("customAvatar" in updates || "avatarCandidates" in updates || "nickname" in updates) {
+    // 头像/昵称/货币变化要让列表/聊天界面立即刷新
+    if ("customAvatar" in updates || "avatarCandidates" in updates || "nickname" in updates || "currency" in updates) {
         emitChatAvatarUpdated(characterId);
     }
     return next;
@@ -1114,6 +1119,32 @@ export function getAvatarCandidatesInfo(characterId: string): string {
 export function getChatNickname(characterId: string): string {
     if (!characterId) return "";
     return loadChatContacts().find(c => c.characterId === characterId)?.nickname?.trim() || "";
+}
+
+/**
+ * 联系人的计价货币：联系人手动设置优先，其次按角色卡时区推导，最后回退人民币。
+ * 红包/转账的 AI 金额按这个货币解释；用户钱包始终按人民币元结算，收付时换算。
+ */
+export function resolveContactCurrency(characterId: string | undefined | null): CurrencyCode {
+    if (!characterId) return "CNY";
+    const contact = loadChatContacts().find(c => c.characterId === characterId);
+    if (isCurrencyCode(contact?.currency)) return contact.currency;
+    const timeZone = loadCharacters().find(c => c.id === characterId)?.timeZone;
+    return currencyFromTimeZone(timeZone);
+}
+
+/**
+ * 一条红包/转账消息的实际计价货币：
+ * 消息上显式存的 currency 优先（用户发送时的选择/AI 消息的解析时点货币），
+ * 没有时私聊按联系人货币、群聊一律人民币（历史消息兼容）。
+ */
+export function resolveMessageCurrency(
+    mediaData: ChatMessage["mediaData"],
+    opts: { isGroup?: boolean; characterId?: string | null },
+): CurrencyCode {
+    if (isCurrencyCode(mediaData?.currency)) return mediaData.currency;
+    if (opts.isGroup) return "CNY";
+    return resolveContactCurrency(opts.characterId);
 }
 
 export const CHAT_AVATAR_UPDATED_EVENT = "chat-avatar-updated";

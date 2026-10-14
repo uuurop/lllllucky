@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownToLine, ArrowUpFromLine, CreditCard, Plus, Trash2, WalletCards, Wifi } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, CreditCard, Plus, RefreshCw, Trash2, WalletCards, Wifi } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/ui";
 import { PageShell } from "@/components/ui/page-shell";
@@ -17,6 +17,17 @@ import {
   WALLET_UPDATED_EVENT,
 } from "@/lib/wallet-storage";
 import type { WalletCard, WalletCardStyle, WalletState } from "@/lib/wallet-types";
+import {
+  CURRENCIES,
+  EXCHANGE_RATE_UPDATED_EVENT,
+  FOREIGN_CURRENCY_CODES,
+  fetchExchangeRates,
+  formatForeignAmount,
+  isExchangeRateStale,
+  loadExchangeRates,
+  setManualRate,
+  type CurrencyCode,
+} from "@/lib/exchange-rate";
 
 type WalletPanelProps = {
   onBack: () => void;
@@ -109,6 +120,118 @@ function WalletBankCard({
         </div>
       </div>
     </div>
+  );
+}
+
+// ── 汇率卡片 ─────────────────────────────────────────
+
+function formatRateUpdatedLabel(value: string): string {
+  if (!value) return "内置参考值";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "内置参考值";
+  return `更新于 ${date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function ExchangeRateSection() {
+  const [rates, setRates] = useState(() => loadExchangeRates());
+  const [refreshing, setRefreshing] = useState(false);
+  const [editingCode, setEditingCode] = useState<CurrencyCode | null>(null);
+  const [draft, setDraft] = useState("");
+
+  useEffect(() => {
+    // 打开钱包时后台刷新一次（6 小时内不重复请求）
+    if (isExchangeRateStale(loadExchangeRates())) {
+      setRefreshing(true);
+      void fetchExchangeRates().finally(() => setRefreshing(false));
+    }
+    const onUpdated = () => setRates(loadExchangeRates());
+    window.addEventListener(EXCHANGE_RATE_UPDATED_EVENT, onUpdated);
+    return () => window.removeEventListener(EXCHANGE_RATE_UPDATED_EVENT, onUpdated);
+  }, []);
+
+  const handleRefresh = () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    void fetchExchangeRates(true).finally(() => setRefreshing(false));
+  };
+
+  const handleSaveManual = () => {
+    if (!editingCode) return;
+    const value = Number(draft);
+    if (Number.isFinite(value) && value > 0) {
+      setRates(setManualRate(editingCode, value));
+    }
+    setEditingCode(null);
+  };
+
+  return (
+    <section className="rounded-2xl bg-[var(--c-card)] p-4 flex flex-col gap-1" style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.025)" }}>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="ts-15 font-bold text-[var(--c-text-title)]">汇率</h2>
+          <div className="ts-11 text-[var(--c-text)] opacity-55 mt-0.5">
+            {formatRateUpdatedLabel(rates.fetchedAt)}{rates.source === "manual" ? " · 手动设置" : rates.source === "fallback" ? " · 联网后自动更新" : ""}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          className="min-h-[34px] px-3 rounded-full flex items-center gap-1.5 ts-12 font-semibold"
+          style={{ background: "color-mix(in srgb, var(--c-icon-active) 10%, var(--c-card))", color: "var(--c-icon-active)" }}
+        >
+          <RefreshCw size={13} className={refreshing ? "animate-spin" : undefined} />
+          刷新
+        </button>
+      </div>
+
+      <div className="flex flex-col mt-1">
+        {FOREIGN_CURRENCY_CODES.map(code => {
+          const meta = CURRENCIES[code];
+          return (
+            <button
+              key={code}
+              type="button"
+              onClick={() => { setEditingCode(code); setDraft(String(rates.rates[code])); }}
+              className="flex items-center gap-3 py-2.5 border-t border-[color-mix(in_srgb,var(--c-card-border)_22%,transparent)] first:border-t-0 text-left"
+            >
+              <div
+                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ts-15 font-bold"
+                style={{ background: "color-mix(in srgb, var(--c-icon-active) 10%, var(--c-card))", color: "var(--c-icon-active)" }}
+              >{meta.symbol}</div>
+              <div className="flex-1 min-w-0">
+                <div className="ts-13 font-semibold text-[var(--c-text-title)]">{meta.name}</div>
+                <div className="ts-11 text-[var(--c-text)] opacity-55">{code}</div>
+              </div>
+              <div className="ts-13 text-[var(--c-text)] shrink-0">
+                1 元 ≈ <span className="font-semibold">{formatForeignAmount(rates.rates[code], code)}</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <div className="ts-11 text-[var(--c-text)] opacity-45 mt-1">点某一币种可以手动改汇率；发红包/转账和收款换算都用这里的值</div>
+
+      {editingCode && (
+        <div className="modal-overlay" onClick={() => setEditingCode(null)}>
+          <div className="modal-dialog" onClick={e => e.stopPropagation()}>
+            <div className="ts-17 font-semibold text-center text-[var(--c-text)]">手动设置{CURRENCIES[editingCode].name}汇率</div>
+            <div className="ts-12 text-center text-[var(--c-icon)]">1 元人民币 = 多少{CURRENCIES[editingCode].name}</div>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={draft}
+              onChange={e => setDraft(e.target.value.replace(/[^0-9.]/g, ""))}
+              className="ui-input w-full text-center"
+              placeholder={String(rates.rates[editingCode])}
+            />
+            <div className="flex gap-3 w-full">
+              <button type="button" onClick={() => setEditingCode(null)} className="ui-btn ui-btn-ghost flex-1">取消</button>
+              <button type="button" onClick={handleSaveManual} className="ui-btn ui-btn-success flex-1">保存</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -432,6 +555,8 @@ export function WalletPanel({ onBack }: WalletPanelProps) {
             {error ? <div className="ts-12 text-[var(--c-danger)]">{error}</div> : null}
           </section>
         ) : null}
+
+        <ExchangeRateSection />
 
         <section className="rounded-2xl bg-[var(--c-card)] px-4 py-2 flex flex-col" style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.025)" }}>
           <div className="py-3 flex items-center justify-between">

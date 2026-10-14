@@ -1,7 +1,8 @@
 "use client";
 
 import { forwardRef, Fragment, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChatSession, ChatMessage, CHAT_APP_SETTINGS_UPDATED_EVENT, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT, CHAT_LOAD_MORE_MESSAGE_COUNT, CHAT_REQUEST_REPLY_EVENT, loadChatAppSettings, loadChatMessages, loadChatContacts, loadChatSessions, saveChatSessions, pushChatMessage, updateChatMessage, deleteChatMessage, deleteChatMessagesFrom, deleteChatMessagesByIds, retractChatMessage, editChatMessage, updateMessageMediaData, replaceResponseBatchWithParts, replaceGroupResponseRound, isReadingDiscussMessage, isSystemInstructionMessage, createResponseBatchId, createResponseRoundId, getLatestStateValues, getLatestCharacterStateValues, compareChatMessages, isSessionStreamingEnabled, resolveChatAvatar, resolveChatDisplayName, CHAT_AVATAR_UPDATED_EVENT } from "@/lib/chat-storage";
+import { ChatSession, ChatMessage, CHAT_APP_SETTINGS_UPDATED_EVENT, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT, CHAT_LOAD_MORE_MESSAGE_COUNT, CHAT_REQUEST_REPLY_EVENT, loadChatAppSettings, loadChatMessages, loadChatContacts, loadChatSessions, saveChatSessions, pushChatMessage, updateChatMessage, deleteChatMessage, deleteChatMessagesFrom, deleteChatMessagesByIds, retractChatMessage, editChatMessage, updateMessageMediaData, replaceResponseBatchWithParts, replaceGroupResponseRound, isReadingDiscussMessage, isSystemInstructionMessage, createResponseBatchId, createResponseRoundId, getLatestStateValues, getLatestCharacterStateValues, compareChatMessages, isSessionStreamingEnabled, resolveChatAvatar, resolveChatDisplayName, resolveContactCurrency, resolveMessageCurrency, CHAT_AVATAR_UPDATED_EVENT } from "@/lib/chat-storage";
+import { cnyToForeign, foreignToCny, formatForeignAmount, type CurrencyCode } from "@/lib/exchange-rate";
 import { cleanStreamText, splitStreamPreviewSegments, stripLiteralTexts, stripXmlTagBlocks } from "@/lib/stream-preview";
 import type { StateValue } from "@/lib/chat-storage";
 import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
@@ -3437,12 +3438,26 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         return Number.isFinite(amount) ? Math.max(0, Math.round(amount * 100) / 100) : 0;
     };
 
+    // 钱包边界统一用人民币：用户发出的外币消息存了 cnyAmount（实际扣的元），缺省退回 amount 本身
+    const getWalletCnyAmount = (mediaData: ChatMessage["mediaData"]): number => {
+        const cny = Number(mediaData?.cnyAmount ?? mediaData?.amount ?? 0);
+        return Number.isFinite(cny) ? Math.max(0, Math.round(cny * 100) / 100) : 0;
+    };
+
+    // 发送时组装金额字段：选了外币就把 amount 换成外币值，cnyAmount 记实际扣款
+    const buildMoneyMediaAmount = (amountCny: number, currency?: CurrencyCode): Pick<NonNullable<ChatMessage["mediaData"]>, "amount" | "currency" | "cnyAmount"> => {
+        if (currency && currency !== "CNY") {
+            return { amount: cnyToForeign(amountCny, currency), currency, cnyAmount: amountCny };
+        }
+        return { amount: amountCny };
+    };
+
     const debitOutgoingMoneyMessage = (
         mediaType: ChatMessage["mediaType"],
         mediaData: ChatMessage["mediaData"],
     ): { ok: boolean; mediaData?: ChatMessage["mediaData"] } => {
         if (mediaType !== "red_packet" && mediaType !== "transfer") return { ok: true, mediaData };
-        const amount = getMoneyMediaAmount(mediaData);
+        const amount = getWalletCnyAmount(mediaData);
         if (amount <= 0) {
             showChatToast("金额无效");
             return { ok: false };
@@ -3470,7 +3485,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const refundOutgoingMoneyMessage = (msg: ChatMessage, reason: "红包退回" | "转账退回"): ChatMessage["mediaData"] => {
         const data = msg.mediaData;
         if (!data?.walletTransactionId || data.walletRefundTransactionId) return data;
-        const amount = getMoneyMediaAmount(data);
+        const amount = getWalletCnyAmount(data);
         if (amount <= 0) return data;
         const result = creditWalletBalance(amount, reason, `${reason}：${data.label || msg.content || "聊天款项"}`, "聊天退款");
         if (!result.ok || !result.transaction) return data;
@@ -3485,15 +3500,20 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         const data = msg.mediaData;
         if (data?.walletDepositTransactionId) return msg;
         const userName = userIdentity?.name || "你";
-        const amount = actionType === "accept_red_packet"
+        // 消息金额按消息货币计价（私聊缺省=联系人货币，群聊=人民币）；外币收款先换算成元再入账
+        const msgCurrency = resolveMessageCurrency(data, { isGroup: session.isGroup, characterId: character?.id });
+        const rawAmount = actionType === "accept_red_packet"
             ? Number(data?.claimedAmounts?.[userName] ?? data?.amount ?? 0)
             : Number(data?.amount ?? 0);
+        const amount = msgCurrency === "CNY" ? rawAmount : foreignToCny(rawAmount, msgCurrency);
         const safeAmount = Number.isFinite(amount) ? Math.max(0, Math.round(amount * 100) / 100) : 0;
         if (safeAmount <= 0) return msg;
+        const baseTitle = actionType === "accept_red_packet" ? "领取红包" : "收款";
+        const foreignNote = msgCurrency === "CNY" ? "" : `（${formatForeignAmount(rawAmount, msgCurrency)} ≈ ${safeAmount.toFixed(2)} 元）`;
         const result = creditWalletBalance(
             safeAmount,
-            actionType === "accept_red_packet" ? "领取红包" : "收款",
-            `${actionType === "accept_red_packet" ? "领取红包" : "收款"}：${data?.label || msg.content || "聊天款项"}`,
+            baseTitle,
+            `${baseTitle}：${data?.label || msg.content || "聊天款项"}${foreignNote}`,
             actionType === "accept_red_packet" ? "红包" : "转账",
         );
         if (!result.ok || !result.transaction) return msg;
@@ -6517,8 +6537,12 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 <RedPacketModal
                     mode="red_packet"
                     isGroup={session.isGroup}
-                    onSend={(amount, label, count) => {
-                        const sent = sendRichMessage("red_packet", { amount, label, status: "pending", count: count || 1 });
+                    defaultCurrency={session.isGroup ? undefined : resolveContactCurrency(session.contactId)}
+                    onSend={(amount, label, count, currency) => {
+                        const sent = sendRichMessage("red_packet", {
+                            ...buildMoneyMediaAmount(amount, session.isGroup ? undefined : currency),
+                            label, status: "pending", count: count || 1,
+                        });
                         if (sent) setRichModal(null);
                     }}
                     onClose={() => setRichModal(null)}
@@ -6537,9 +6561,12 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             {richModal === "transfer" && (
                 <RedPacketModal
                     mode="transfer"
-                    onSend={(amount, label) => {
+                    defaultCurrency={session.isGroup ? undefined : resolveContactCurrency(session.contactId)}
+                    onSend={(amount, label, _count, currency) => {
+                        const moneyFields = buildMoneyMediaAmount(amount, session.isGroup ? undefined : currency);
                         if (session.isGroup && transferTarget) {
                             const sent = sendRichMessage("transfer", {
+                                ...moneyFields,
                                 amount, label, status: "pending",
                                 senderName: userIdentity?.name || "你",
                                 recipientId: transferTarget.id,
@@ -6550,7 +6577,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                 setTransferTarget(null);
                             }
                         } else {
-                            const sent = sendRichMessage("transfer", { amount, label, status: "pending" });
+                            const sent = sendRichMessage("transfer", { ...moneyFields, label, status: "pending" });
                             if (sent) setRichModal(null);
                         }
                     }}
@@ -6642,6 +6669,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 <MediaDetailModal
                     msg={mediaDetailMsg}
                     userName={userIdentity?.name || "你"}
+                    currency={resolveMessageCurrency(mediaDetailMsg.mediaData, { isGroup: session.isGroup, characterId: session.contactId })}
                     groupSize={session.isGroup ? (session.participantIds?.length || 0) + (session.isSpectator ? 0 : 1) : undefined}
                     onAccept={(updatedMsg, sysText, actionType) => {
                         const walletUpdatedMsg = updatedMsg.role === "assistant"

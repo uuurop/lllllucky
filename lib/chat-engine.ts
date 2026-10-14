@@ -23,6 +23,7 @@ import {
     isSessionStreamingEnabled,
     getAvatarCandidatesInfo,
     getChatNickname,
+    resolveContactCurrency,
 } from "./chat-storage";
 import { extractTextToolDirectiveText, stripTextToolDirectives } from "./text-tool-protocol";
 import type { ApiConfig, PresetConfig, Prompt, PromptOrderEntry, RegexConfig } from "./settings-types";
@@ -1923,6 +1924,7 @@ export async function buildChatPromptMessages(
         customStickerExample: getCustomStickerExample(character.id),
         avatarCandidatesInfo: getAvatarCandidatesInfo(character.id),
         chatNickname: session.isGroup ? undefined : getChatNickname(character.id),
+        chatCurrency: session.isGroup ? undefined : resolveContactCurrency(character.id),
         musicLocal,
         musicCloud,
         musicOnlineHint,

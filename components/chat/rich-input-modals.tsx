@@ -3,6 +3,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHidden } from "./call-stt-warning-dialog";
 import { isAndroidBrowser } from "./voice-input-platform";
+import {
+    CURRENCIES, FOREIGN_CURRENCY_CODES, EXCHANGE_RATE_UPDATED_EVENT,
+    cnyToForeign, fetchExchangeRates, formatForeignAmount, loadExchangeRates,
+    type CurrencyCode, type ExchangeRateState,
+} from "@/lib/exchange-rate";
 
 // ── Photo Input Modal ─────────────────────────────
 
@@ -121,14 +126,18 @@ export function PhotoInputModal({ onSend, onClose }: PhotoInputModalProps) {
 interface RedPacketModalProps {
     mode: "red_packet" | "transfer";
     isGroup?: boolean;
-    onSend: (amount: number, label: string, count?: number) => void;
+    /** 私聊时传入联系人的默认货币；群聊/不传则不显示货币选择（一律人民币） */
+    defaultCurrency?: CurrencyCode;
+    onSend: (amount: number, label: string, count?: number, currency?: CurrencyCode) => void;
     onClose: () => void;
 }
 
-export function RedPacketModal({ mode, isGroup, onSend, onClose }: RedPacketModalProps) {
+export function RedPacketModal({ mode, isGroup, defaultCurrency, onSend, onClose }: RedPacketModalProps) {
     const [amount, setAmount] = useState("");
     const [label, setLabel] = useState("");
     const [count, setCount] = useState("1");
+    const [currency, setCurrency] = useState<CurrencyCode>(defaultCurrency || "CNY");
+    const [rates, setRates] = useState<ExchangeRateState>(() => loadExchangeRates());
 
     const isRedPacket = mode === "red_packet";
     const title = isRedPacket ? "发红包" : "转账";
@@ -136,12 +145,25 @@ export function RedPacketModal({ mode, isGroup, onSend, onClose }: RedPacketModa
     // Brand-specific colors: WeChat red packet / transfer (CSS variables)
     const color = isRedPacket ? "var(--c-redpacket)" : "var(--c-transfer)";
 
+    // 打开弹窗时后台刷新一次汇率（stale 才真正请求），并订阅钱包面板的手动修改
+    useEffect(() => {
+        void fetchExchangeRates();
+        const onUpdated = () => setRates(loadExchangeRates());
+        window.addEventListener(EXCHANGE_RATE_UPDATED_EVENT, onUpdated);
+        return () => window.removeEventListener(EXCHANGE_RATE_UPDATED_EVENT, onUpdated);
+    }, []);
+
     const handleSend = () => {
         const num = parseFloat(amount);
         if (!num || num <= 0) return;
         const cnt = isRedPacket ? (isGroup ? Math.max(1, parseInt(count, 10) || 1) : 1) : undefined;
-        onSend(num, label.trim() || defaultLabel, cnt);
+        onSend(num, label.trim() || defaultLabel, cnt, currency);
     };
+
+    const amountNum = parseFloat(amount) || 0;
+    const foreignPreview = currency !== "CNY" && amountNum > 0
+        ? cnyToForeign(amountNum, currency, rates)
+        : null;
 
     return (
         <div className="modal-overlay" onClick={onClose}>
@@ -159,7 +181,7 @@ export function RedPacketModal({ mode, isGroup, onSend, onClose }: RedPacketModa
                 </div>
                 <div className="p-5 flex flex-col gap-3.5">
                     <div>
-                        <div className="ts-12 text-[var(--c-icon)] mb-1.5">金额</div>
+                        <div className="ts-12 text-[var(--c-icon)] mb-1.5">金额（元）</div>
                         <div className="flex items-center gap-2">
                             <span
                                 className="ts-24 font-bold"
@@ -176,6 +198,35 @@ export function RedPacketModal({ mode, isGroup, onSend, onClose }: RedPacketModa
                                         />
                         </div>
                     </div>
+                    {defaultCurrency && (
+                        <div>
+                            <div className="ts-12 text-[var(--c-icon)] mb-1.5">TA 收到的货币</div>
+                            <div className="flex gap-1.5 flex-wrap">
+                                {(["CNY", ...FOREIGN_CURRENCY_CODES] as CurrencyCode[]).map(code => {
+                                    const active = currency === code;
+                                    return (
+                                        <button
+                                            key={code}
+                                            type="button"
+                                            onClick={() => setCurrency(code)}
+                                            className="px-2.5 py-1.5 rounded-full ts-12 border"
+                                            style={{
+                                                borderColor: active ? color : "var(--c-border, rgba(0,0,0,0.1))",
+                                                background: active ? color : "transparent",
+                                                color: active ? "#fff" : "var(--c-text)",
+                                            }}
+                                        >{CURRENCIES[code].symbol} {CURRENCIES[code].name}</button>
+                                    );
+                                })}
+                            </div>
+                            {foreignPreview != null && (
+                                <div className="ts-12 mt-2 text-[var(--c-icon)]">
+                                    TA 将收到 <span className="font-semibold" style={{ color }}>{formatForeignAmount(foreignPreview, currency)}</span>
+                                    <span className="ml-1 opacity-70">≈ {amountNum.toFixed(2)} 元</span>
+                                </div>
+                            )}
+                        </div>
+                    )}
                     {isRedPacket && isGroup && (
                         <div>
                             <div className="ts-12 text-[var(--c-icon)] mb-1.5">个数</div>

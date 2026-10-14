@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
 import { findCustomStickerByName, resolveCustomStickerUrl } from "@/lib/custom-sticker-storage";
 import { isMediaStoreRef, loadMediaObjectUrl } from "@/lib/media-cache-storage";
 import { getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
-import { ChatMessage, createOrGetSession, updateMessageMediaStatus, updateMessageMediaData, resolveChatAvatar } from "@/lib/chat-storage";
+import { ChatMessage, createOrGetSession, updateMessageMediaStatus, updateMessageMediaData, resolveChatAvatar, resolveMessageCurrency } from "@/lib/chat-storage";
+import { formatForeignAmount, foreignToCny, type CurrencyCode } from "@/lib/exchange-rate";
 import { resolveContactCard } from "@/lib/contact-card";
 import { loadCharacters } from "@/lib/character-storage";
 import { CHAT_OPEN_SESSION_EVENT, dispatchOpenAddContact } from "@/lib/chat-notification-events";
@@ -91,9 +92,9 @@ function PluginKindBubble({ msg, kind }: { msg: ChatMessage; kind: string }) {
 export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charName, userName, onSystemMessage, groupSize, onShowDetail, characterId, onMusicPlay, onActionSelect, displayContent, defaultTranslationExpanded = false }: MessageBubbleProps) {
     switch (msg.mediaType) {
         case "red_packet":
-            return <RedPacketBubble msg={msg} charName={charName} userName={userName} groupSize={groupSize} onShowDetail={onShowDetail} />;
+            return <RedPacketBubble msg={msg} charName={charName} userName={userName} groupSize={groupSize} currency={resolveMessageCurrency(msg.mediaData, { isGroup: groupSize != null, characterId })} onShowDetail={onShowDetail} />;
         case "transfer":
-            return <TransferBubble msg={msg} charName={charName} userName={userName} onShowDetail={onShowDetail} />;
+            return <TransferBubble msg={msg} charName={charName} userName={userName} currency={resolveMessageCurrency(msg.mediaData, { isGroup: groupSize != null, characterId })} onShowDetail={onShowDetail} />;
         case "gift":
             return <GiftBubble msg={msg} />;
         case "contact_card":
@@ -650,8 +651,9 @@ function TextBubble({ content, onActionSelect, defaultTranslationExpanded = fals
 
 // ── Red Packet ─────────────────────────────
 
-function RedPacketBubble({ msg, charName, userName, groupSize, onShowDetail }: {
+function RedPacketBubble({ msg, charName, userName, groupSize, currency = "CNY", onShowDetail }: {
     msg: ChatMessage; charName?: string; userName?: string; groupSize?: number;
+    currency?: CurrencyCode;
     onShowDetail?: (msg: ChatMessage) => void;
 }) {
     const d = msg.mediaData;
@@ -662,6 +664,7 @@ function RedPacketBubble({ msg, charName, userName, groupSize, onShowDetail }: {
     const allClaimed = d?.status === "opened" || claimedBy.length >= totalRecipients;
     const isDone = allClaimed || isDeclined;
     const userShare = userName ? claimedAmounts[userName] : undefined;
+    const isForeign = currency !== "CNY";
 
     const bgClass = isDeclined
         ? "bg-declined-gradient"
@@ -679,7 +682,10 @@ function RedPacketBubble({ msg, charName, userName, groupSize, onShowDetail }: {
                         {d?.label || "恭喜发财，大吉大利"}
                     </div>
                     {userShare != null && (
-                        <div className="ts-20 font-bold mt-1 ui-text-white-85">¥{userShare.toFixed(2)}</div>
+                        <div className="ts-20 font-bold mt-1 ui-text-white-85">
+                            {isForeign ? formatForeignAmount(userShare, currency) : `¥${userShare.toFixed(2)}`}
+                            {isForeign && <span className="ts-12 font-normal ml-1 opacity-80">≈ ¥{foreignToCny(userShare, currency).toFixed(2)}</span>}
+                        </div>
                     )}
                     {isDeclined && <div className="ts-12 mt-1 ui-text-white-70">已退回</div>}
                 </div>
@@ -696,13 +702,16 @@ function RedPacketBubble({ msg, charName, userName, groupSize, onShowDetail }: {
 
 // ── Transfer ─────────────────────────────
 
-function TransferBubble({ msg, charName, userName, onShowDetail }: {
+function TransferBubble({ msg, charName, userName, currency = "CNY", onShowDetail }: {
     msg: ChatMessage; charName?: string; userName?: string;
+    currency?: CurrencyCode;
     onShowDetail?: (msg: ChatMessage) => void;
 }) {
     const d = msg.mediaData;
     const isReceived = d?.status === "received";
     const isDeclined = d?.status === "declined";
+    const isForeign = currency !== "CNY";
+    const amountNum = typeof d?.amount === "number" ? d.amount : Number(d?.amount ?? 0);
 
     const bgClass = isDeclined
         ? "bg-declined-gradient"
@@ -716,7 +725,12 @@ function TransferBubble({ msg, charName, userName, onShowDetail }: {
             <div className={`chat-transfer-body p-4 flex items-center gap-3 ${bgClass}`}>
                 <div className="ts-28 shrink-0">💰</div>
                 <div className="flex-1">
-                    <div className="text-white ts-24 font-bold">¥{d?.amount?.toFixed(2)}</div>
+                    <div className="text-white ts-24 font-bold">
+                        {isForeign ? formatForeignAmount(amountNum, currency) : `¥${d?.amount?.toFixed(2)}`}
+                    </div>
+                    {isForeign && (
+                        <div className="ts-12 mt-0.5 ui-text-white-85">≈ ¥{foreignToCny(amountNum, currency).toFixed(2)}</div>
+                    )}
                     <div className="ts-13 mt-0.5 ui-text-white-85">{d?.label || "转账"}</div>
                 </div>
             </div>
@@ -1616,17 +1630,24 @@ interface MediaDetailModalProps {
     msg: ChatMessage;
     userName: string;
     groupSize?: number;
+    /** 消息计价货币：缺省人民币；外币时界面显示外币金额 + 约合人民币 */
+    currency?: CurrencyCode;
     onAccept: (updatedMsg: ChatMessage, sysText: string, actionType: string) => void;
     onClose: () => void;
 }
 
-export function MediaDetailModal({ msg, userName, groupSize, onAccept, onClose }: MediaDetailModalProps) {
+export function MediaDetailModal({ msg, userName, groupSize, currency = "CNY", onAccept, onClose }: MediaDetailModalProps) {
     const d = msg.mediaData;
     const isRedPacket = msg.mediaType === "red_packet";
     const isTransfer = msg.mediaType === "transfer";
     const isPaymentRequest = msg.mediaType === "payment_request";
     const [paymentError, setPaymentError] = useState("");
     if (!isRedPacket && !isTransfer && !isPaymentRequest) return null;
+
+    // 外币只体现在红包/转账上，代付保持人民币
+    const moneyCurrency = isPaymentRequest ? "CNY" : currency;
+    const isForeign = moneyCurrency !== "CNY";
+    const fmtMoney = (n: number) => isForeign ? formatForeignAmount(n, moneyCurrency) : `¥${n.toFixed(2)}`;
 
     const isFromUser = msg.role === "user";
     const senderDisplay = isFromUser ? userName : (d?.senderName || msg.senderName || "对方");
@@ -1672,7 +1693,7 @@ export function MediaDetailModal({ msg, userName, groupSize, onAccept, onClose }
         const newStatus = newAllClaimed ? "opened" as const : "pending" as const;
         const updatedData = { ...d, status: newStatus, claimedBy: newClaimedBy, claimedAmounts: newClaimedAmounts };
         updateMessageMediaData(msg.id, updatedData);
-        onAccept({ ...msg, mediaData: updatedData }, `${userName}领取了${senderDisplay}的红包，金额:${share}元`, "accept_red_packet");
+        onAccept({ ...msg, mediaData: updatedData }, `${userName}领取了${senderDisplay}的红包，金额:${share}${isForeign ? moneyCurrency : "元"}`, "accept_red_packet");
     };
 
     const handleRedPacketDecline = () => {
@@ -1745,7 +1766,7 @@ export function MediaDetailModal({ msg, userName, groupSize, onAccept, onClose }
     let statusText = "";
     if (isRedPacket) {
         if (isDeclined) statusText = "已退回";
-        else if (alreadyClaimed && userShare != null) statusText = `你领取了 ¥${userShare.toFixed(2)}`;
+        else if (alreadyClaimed && userShare != null) statusText = `你领取了 ${fmtMoney(userShare)}`;
         else if (allClaimed) statusText = "红包已领完";
         else if (isFromUser) statusText = "你发出的红包";
     } else {
@@ -1764,9 +1785,12 @@ export function MediaDetailModal({ msg, userName, groupSize, onAccept, onClose }
     const paymentItemsText = d?.paymentRequestItemsText || (d?.paymentRequestItems || [])
         .map(item => `${item.title}/${item.detail}/${item.priceLabel}/${item.quantityLabel}`)
         .join("; ");
-    const modalAmountText = typeof d?.amount === "number" && Number.isFinite(d.amount)
-        ? d.amount.toFixed(2)
-        : String(d?.paymentRequestAmountLabel || "0.00");
+    const rawModalAmount = typeof d?.amount === "number" && Number.isFinite(d.amount)
+        ? d.amount
+        : Number(d?.paymentRequestAmountLabel || 0);
+    const modalAmountText = isForeign
+        ? formatForeignAmount(rawModalAmount, moneyCurrency)
+        : `¥${(typeof d?.amount === "number" && Number.isFinite(d.amount) ? d.amount.toFixed(2) : String(d?.paymentRequestAmountLabel || "0.00"))}`;
 
     return (
         <div className="modal-overlay" onClick={onClose}>
@@ -1774,7 +1798,10 @@ export function MediaDetailModal({ msg, userName, groupSize, onAccept, onClose }
                 {/* Header with gradient */}
                 <div className={`media-modal-header ${gradientClass}`}>
                     <div className="media-modal-emoji">{isRedPacket ? "🧧" : isTransfer ? "💰" : "🧾"}</div>
-                    <div className="media-modal-amount">¥{modalAmountText}</div>
+                    <div className="media-modal-amount">{modalAmountText}</div>
+                    {isForeign && (
+                        <div className="media-modal-sub">≈ ¥{foreignToCny(rawModalAmount, moneyCurrency).toFixed(2)}</div>
+                    )}
                     <div className="media-modal-label">
                         {isRedPacket ? (d?.label || "恭喜发财，大吉大利") : isTransfer ? (d?.label || "转账") : "代付请求"}
                     </div>
@@ -1804,7 +1831,7 @@ export function MediaDetailModal({ msg, userName, groupSize, onAccept, onClose }
                             {claimedBy.map((name) => (
                                 <div key={name} className="media-modal-list-row">
                                     <span>{name}</span>
-                                    <span className="media-modal-list-amt">¥{(claimedAmounts[name] ?? 0).toFixed(2)}</span>
+                                    <span className="media-modal-list-amt">{fmtMoney(claimedAmounts[name] ?? 0)}</span>
                                 </div>
                             ))}
                         </div>

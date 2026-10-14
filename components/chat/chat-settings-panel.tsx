@@ -17,6 +17,7 @@ import {
     normalizeVisionImagePromptLimit,
     resolveChatAvatar,
     resolveChatDisplayName,
+    resolveContactCurrency,
     updateChatContact,
     CHAT_AVATAR_UPDATED_EVENT,
     MAX_VISION_IMAGE_PROMPT_LIMIT,
@@ -56,7 +57,8 @@ import { downloadFile } from "@/lib/download-utils";
 import { getSchemes, saveScheme, deleteScheme, type CSSScheme } from "@/lib/css-scheme-storage";
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { KeyboardAutoSendDebounceItem } from "@/components/chat/keyboard-auto-send-debounce-item";
-import { ChevronRight, Image as ImageIcon, ImagePlus, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, type LucideIcon } from "lucide-react";
+import { ChevronRight, Image as ImageIcon, ImagePlus, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Coins, type LucideIcon } from "lucide-react";
+import { CURRENCIES, FOREIGN_CURRENCY_CODES, type CurrencyCode } from "@/lib/exchange-rate";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { ConfirmDialog } from "@/components/ui/modal";
@@ -318,6 +320,11 @@ export function ChatSettingsPanel({
     const [editingNickname, setEditingNickname] = useState(false);
     const [nicknameDraft, setNicknameDraft] = useState("");
     const [nicknameGenerating, setNicknameGenerating] = useState(false);
+    // 计价货币：存在联系人上，缺省按角色时区推导
+    const [contactCurrency, setContactCurrency] = useState<CurrencyCode>(() => resolveContactCurrency(session.contactId));
+    const [currencyOverride, setCurrencyOverride] = useState<string | undefined>(() =>
+        loadChatContacts().find(c => c.characterId === session.contactId)?.currency);
+    const [editingCurrency, setEditingCurrency] = useState(false);
     const [videoBackground, setVideoBackground] = useState<string>(session.videoBackground || "");
     const [voiceBackground, setVoiceBackground] = useState<string>(session.voiceBackground || "");
     const [isPinned, setIsPinned] = useState(session.isPinned || false);
@@ -992,6 +999,21 @@ export function ChatSettingsPanel({
                             </div>
                         </button>
                     )}
+                    {!session.isGroup && (
+                        <button className="menu-item" onClick={() => setEditingCurrency(true)}>
+                            <ChatInfoIcon icon={Coins} color={CONTENT_APP_ACCENTS.shopping} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">TA 的货币</span>
+                                <span className="menu-desc">红包和转账按这个货币计价</span>
+                            </div>
+                            <div className="menu-right">
+                                <span className="menu-desc mr-1">
+                                    {CURRENCIES[contactCurrency].name}{currencyOverride ? "" : "（跟随时区）"}
+                                </span>
+                                <ChevronRight size={16} />
+                            </div>
+                        </button>
+                    )}
                     <button className="menu-item" onClick={() => setEditingAlias(true)}>
                         <ChatInfoIcon icon={MessageSquare} color={CONTENT_APP_ACCENTS.chat} />
                         <div className="menu-label-group"><span className="menu-label">{session.isGroup ? "群聊名称" : "设置备注"}</span></div>
@@ -1568,6 +1590,46 @@ export function ChatSettingsPanel({
                                 setEditingNickname(false);
                             }} className="ui-btn ui-btn-success flex-1">保存</button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal: Currency */}
+            {editingCurrency && !session.isGroup && (
+                <div className="modal-overlay" onClick={() => setEditingCurrency(false)}>
+                    <div className="modal-dialog" onClick={e => e.stopPropagation()}>
+                        <div className="ts-17 font-semibold text-center text-[var(--c-text)]">TA 的货币</div>
+                        <div className="ts-12 text-center text-[var(--c-icon)] -mt-1">红包和转账按这个货币计价，收款时自动换算成人民币入账</div>
+                        <div className="w-full flex flex-col gap-2">
+                            {(["auto", "CNY", ...FOREIGN_CURRENCY_CODES] as const).map(opt => {
+                                const isAuto = opt === "auto";
+                                const active = isAuto ? !currencyOverride : currencyOverride === opt;
+                                const label = isAuto ? "跟随所在时区" : CURRENCIES[opt as CurrencyCode].name;
+                                const sub = isAuto
+                                    ? `当前：${CURRENCIES[contactCurrency].name}`
+                                    : `${CURRENCIES[opt as CurrencyCode].symbol} ${opt}`;
+                                return (
+                                    <button
+                                        key={opt}
+                                        onClick={() => {
+                                            updateChatContact(session.contactId, { currency: isAuto ? undefined : opt });
+                                            setCurrencyOverride(isAuto ? undefined : opt);
+                                            setContactCurrency(resolveContactCurrency(session.contactId));
+                                            setEditingCurrency(false);
+                                        }}
+                                        className="w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left"
+                                        style={{
+                                            borderColor: active ? "var(--c-primary, #3B82F6)" : "var(--c-border, rgba(0,0,0,0.08))",
+                                            background: active ? "rgba(59,130,246,0.08)" : "transparent",
+                                        }}
+                                    >
+                                        <span className="ts-15 text-[var(--c-text)]">{label}</span>
+                                        <span className="ts-12 text-[var(--c-icon)]">{sub}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <button onClick={() => setEditingCurrency(false)} className="ui-btn ui-btn-ghost w-full">取消</button>
                     </div>
                 </div>
             )}
