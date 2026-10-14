@@ -205,7 +205,7 @@ export function TimezoneSettingsPanel({ onBack, scope = "contacts", variant = "p
         </>
     );
 
-    const pickerList = (
+    const renderPickerList = () => !pickerFor ? null : (
         <>
             <div className="relative">
                 <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--c-icon)]" />
@@ -220,24 +220,24 @@ export function TimezoneSettingsPanel({ onBack, scope = "contacts", variant = "p
             <div className="flex flex-col gap-1">
                 <button
                     className="menu-item"
-                    onClick={() => { setContactTimeZone(pickerFor!.characterId, undefined); setPickerFor(null); }}
+                    onClick={() => { setContactTimeZone(pickerFor.characterId, undefined); setPickerFor(null); }}
                 >
                     <div className="menu-label-group">
                         <span className="menu-label">跟随系统时区</span>
                         <span className="menu-desc">{systemTimeZone}（{utcOffsetLabel(systemTimeZone)}）</span>
                     </div>
                     <div className="menu-right">
-                        {!pickerFor!.timeZone && <Check size={16} className="text-[var(--c-success)]" />}
+                        {!pickerFor.timeZone && <Check size={16} className="text-[var(--c-success)]" />}
                     </div>
                 </button>
                 {pickerOptions.map(tz => {
-                    const selected = pickerFor!.timeZone === tz;
+                    const selected = pickerFor.timeZone === tz;
                     const localTime = currentTimeIn(tz);
                     return (
                         <button
                             key={tz}
                             className="menu-item"
-                            onClick={() => { setContactTimeZone(pickerFor!.characterId, tz); setPickerFor(null); }}
+                            onClick={() => { setContactTimeZone(pickerFor.characterId, tz); setPickerFor(null); }}
                         >
                             <div className="menu-label-group">
                                 <span className="menu-label">{tz}</span>
@@ -269,7 +269,7 @@ export function TimezoneSettingsPanel({ onBack, scope = "contacts", variant = "p
                     <span className="calendar-icon-btn" style={{ opacity: 0, pointerEvents: "none" }} aria-hidden="true"><ChevronLeft size={16} /></span>
                 </div>
                 <div className="calendar-tz-body hide-scrollbar">
-                    {pickerList}
+                    {renderPickerList()}
                 </div>
             </div>
         </div>
@@ -282,7 +282,7 @@ export function TimezoneSettingsPanel({ onBack, scope = "contacts", variant = "p
                     <span className="modal-header-btn modal-header-btn-action" style={{ opacity: 0, pointerEvents: "none" }}><Check size={18} /></span>
                 </div>
                 <div className="modal-body hide-scrollbar flex flex-col gap-3 pb-10" data-ui="modal-body">
-                    {pickerList}
+                    {renderPickerList()}
                 </div>
             </div>
         </div>
