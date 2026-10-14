@@ -102,7 +102,7 @@ type ContactRow = {
     timeZone: string;
 };
 
-export function TimezoneSettingsPanel({ onBack, scope = "contacts" }: { onBack: () => void; scope?: "contacts" | "all" }) {
+export function TimezoneSettingsPanel({ onBack, scope = "contacts", variant = "page" }: { onBack: () => void; scope?: "contacts" | "all"; variant?: "page" | "modal" }) {
     const [tick, setTick] = useState(0);
     const [pickerFor, setPickerFor] = useState<ContactRow | null>(null);
     const [pickerSearch, setPickerSearch] = useState("");
@@ -152,120 +152,144 @@ export function TimezoneSettingsPanel({ onBack, scope = "contacts" }: { onBack: 
 
     const boundCount = rows.filter(r => r.timeZone).length;
 
-    return (
-        <PageShell title="时区与所在地" onBack={onBack} className="absolute inset-0 z-[100]">
-            <div className="page-menu profile-settings-menu">
-                <div className="menu-group">
-                    <div className="menu-item" style={{ cursor: "default" }}>
-                        <Globe size={18} className="text-[var(--c-icon)] opacity-70" strokeWidth={1.5} />
-                        <div className="menu-label-group">
-                            <span className="menu-label">本机系统时区</span>
-                            <span className="menu-desc">{systemTimeZone}（{utcOffsetLabel(systemTimeZone)}）· 未绑定的联系人跟随这个时间</span>
-                        </div>
+    const body = (
+        <>
+            <div className="menu-group">
+                <div className="menu-item" style={{ cursor: "default" }}>
+                    <Globe size={18} className="text-[var(--c-icon)] opacity-70" strokeWidth={1.5} />
+                    <div className="menu-label-group">
+                        <span className="menu-label">本机系统时区</span>
+                        <span className="menu-desc">{systemTimeZone}（{utcOffsetLabel(systemTimeZone)}）· 未绑定的{scope === "all" ? "角色" : "联系人"}跟随这个时间</span>
                     </div>
-                </div>
-
-                <p className="menu-group-desc mx-2">
-                    给联系人绑定所在地时区后，TA 看到的「当前时间」就是当地的时间——问候、作息、深夜清晨都会按 TA 那边的钟点来。已绑定 {boundCount} / {rows.length} 位联系人，新加的联系人默认跟随系统时区，随时可以来这里改。
-                </p>
-
-                <div className="menu-group">
-                    {rows.length === 0 && (
-                        <div className="menu-item" style={{ cursor: "default" }}>
-                            <div className="menu-label-group">
-                                <span className="menu-desc">还没有联系人，先去通讯录加个好友吧。</span>
-                            </div>
-                        </div>
-                    )}
-                    {rows.map(row => {
-                        const localTime = row.timeZone ? currentTimeIn(row.timeZone) : "";
-                        return (
-                            <button
-                                key={row.characterId}
-                                className="menu-item"
-                                onClick={() => { setPickerFor(row); setPickerSearch(""); }}
-                            >
-                                <div className="chat-contact-avatar" style={{ width: 36, height: 36 }}>
-                                    {row.avatar ? <img src={row.avatar} alt="" /> : <ChatFallbackAvatar />}
-                                </div>
-                                <div className="menu-label-group">
-                                    <span className="menu-label">{row.name}</span>
-                                    <span className="menu-desc">
-                                        {row.timeZone
-                                            ? `${row.timeZone}（${utcOffsetLabel(row.timeZone)}）${localTime ? ` · 当地 ${localTime}` : ""}`
-                                            : "跟随系统时区"}
-                                    </span>
-                                </div>
-                                <div className="menu-right">
-                                    <ChevronRight size={16} />
-                                </div>
-                            </button>
-                        );
-                    })}
                 </div>
             </div>
 
-            {/* 时区选择弹窗 */}
-            {pickerFor && (
-                <div className="modal-overlay modal-overlay-bottom">
-                    <div className="modal-sheet" data-ui="modal-sheet">
-                        <div className="modal-header" data-ui="modal-header">
-                            <button onClick={() => setPickerFor(null)} className="modal-header-btn modal-header-btn-muted" aria-label="取消"><X size={18} /></button>
-                            <span className="modal-header-title">{pickerFor.name} 的所在地</span>
-                            <span className="modal-header-btn modal-header-btn-action" style={{ opacity: 0, pointerEvents: "none" }}><Check size={18} /></span>
-                        </div>
-                        <div className="modal-body hide-scrollbar flex flex-col gap-3 pb-10" data-ui="modal-body">
-                            <div className="relative">
-                                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--c-icon)]" />
-                                <Input
-                                    type="text"
-                                    value={pickerSearch}
-                                    onChange={(e) => setPickerSearch(e.target.value)}
-                                    placeholder="搜索时区，如 Tokyo、London、New_York"
-                                    style={{ paddingLeft: 32 }}
-                                    autoFocus
-                                />
-                            </div>
-                            <div className="flex flex-col gap-1">
-                                <button
-                                    className="menu-item"
-                                    onClick={() => { setContactTimeZone(pickerFor.characterId, undefined); setPickerFor(null); }}
-                                >
-                                    <div className="menu-label-group">
-                                        <span className="menu-label">跟随系统时区</span>
-                                        <span className="menu-desc">{systemTimeZone}（{utcOffsetLabel(systemTimeZone)}）</span>
-                                    </div>
-                                    <div className="menu-right">
-                                        {!pickerFor.timeZone && <Check size={16} className="text-[var(--c-success)]" />}
-                                    </div>
-                                </button>
-                                {pickerOptions.map(tz => {
-                                    const selected = pickerFor.timeZone === tz;
-                                    const localTime = currentTimeIn(tz);
-                                    return (
-                                        <button
-                                            key={tz}
-                                            className="menu-item"
-                                            onClick={() => { setContactTimeZone(pickerFor.characterId, tz); setPickerFor(null); }}
-                                        >
-                                            <div className="menu-label-group">
-                                                <span className="menu-label">{tz}</span>
-                                                <span className="menu-desc">{utcOffsetLabel(tz)}{localTime ? ` · 当地 ${localTime}` : ""}</span>
-                                            </div>
-                                            <div className="menu-right">
-                                                {selected && <Check size={16} className="text-[var(--c-success)]" />}
-                                            </div>
-                                        </button>
-                                    );
-                                })}
-                                {pickerOptions.length === 0 && (
-                                    <span className="menu-desc px-2 py-3">没有匹配的时区，换个关键词试试。</span>
-                                )}
-                            </div>
+            <p className="menu-group-desc mx-2">
+                绑定所在地时区后，TA 看到的「当前时间」就是当地的时间——问候、作息、日程、深夜清晨都会按 TA 那边的钟点来。已绑定 {boundCount} / {rows.length} 位，新角色默认跟随系统时区。
+            </p>
+
+            <div className="menu-group">
+                {rows.length === 0 && (
+                    <div className="menu-item" style={{ cursor: "default" }}>
+                        <div className="menu-label-group">
+                            <span className="menu-desc">还没有角色，先去创建一张角色卡吧。</span>
                         </div>
                     </div>
+                )}
+                {rows.map(row => {
+                    const localTime = row.timeZone ? currentTimeIn(row.timeZone) : "";
+                    return (
+                        <button
+                            key={row.characterId}
+                            className="menu-item"
+                            onClick={() => { setPickerFor(row); setPickerSearch(""); }}
+                        >
+                            <div className="chat-contact-avatar" style={{ width: 36, height: 36 }}>
+                                {row.avatar ? <img src={row.avatar} alt="" /> : <ChatFallbackAvatar />}
+                            </div>
+                            <div className="menu-label-group">
+                                <span className="menu-label">{row.name}</span>
+                                <span className="menu-desc">
+                                    {row.timeZone
+                                        ? `${row.timeZone}（${utcOffsetLabel(row.timeZone)}）${localTime ? ` · 当地 ${localTime}` : ""}`
+                                        : "跟随系统时区"}
+                                </span>
+                            </div>
+                            <div className="menu-right">
+                                <ChevronRight size={16} />
+                            </div>
+                        </button>
+                    );
+                })}
+            </div>
+        </>
+    );
+
+    const picker = pickerFor && (
+        <div className="modal-overlay modal-overlay-bottom">
+            <div className="modal-sheet" data-ui="modal-sheet">
+                <div className="modal-header" data-ui="modal-header">
+                    <button onClick={() => setPickerFor(null)} className="modal-header-btn modal-header-btn-muted" aria-label="取消"><X size={18} /></button>
+                    <span className="modal-header-title">{pickerFor.name} 的所在地</span>
+                    <span className="modal-header-btn modal-header-btn-action" style={{ opacity: 0, pointerEvents: "none" }}><Check size={18} /></span>
                 </div>
-            )}
+                <div className="modal-body hide-scrollbar flex flex-col gap-3 pb-10" data-ui="modal-body">
+                    <div className="relative">
+                        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--c-icon)]" />
+                        <Input
+                            type="text"
+                            value={pickerSearch}
+                            onChange={(e) => setPickerSearch(e.target.value)}
+                            placeholder="搜索时区，如 Tokyo、London、New_York"
+                            style={{ paddingLeft: 32 }}
+                        />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                        <button
+                            className="menu-item"
+                            onClick={() => { setContactTimeZone(pickerFor.characterId, undefined); setPickerFor(null); }}
+                        >
+                            <div className="menu-label-group">
+                                <span className="menu-label">跟随系统时区</span>
+                                <span className="menu-desc">{systemTimeZone}（{utcOffsetLabel(systemTimeZone)}）</span>
+                            </div>
+                            <div className="menu-right">
+                                {!pickerFor.timeZone && <Check size={16} className="text-[var(--c-success)]" />}
+                            </div>
+                        </button>
+                        {pickerOptions.map(tz => {
+                            const selected = pickerFor.timeZone === tz;
+                            const localTime = currentTimeIn(tz);
+                            return (
+                                <button
+                                    key={tz}
+                                    className="menu-item"
+                                    onClick={() => { setContactTimeZone(pickerFor.characterId, tz); setPickerFor(null); }}
+                                >
+                                    <div className="menu-label-group">
+                                        <span className="menu-label">{tz}</span>
+                                        <span className="menu-desc">{utcOffsetLabel(tz)}{localTime ? ` · 当地 ${localTime}` : ""}</span>
+                                    </div>
+                                    <div className="menu-right">
+                                        {selected && <Check size={16} className="text-[var(--c-success)]" />}
+                                    </div>
+                                </button>
+                            );
+                        })}
+                        {pickerOptions.length === 0 && (
+                            <span className="menu-desc px-2 py-3">没有匹配的时区，换个关键词试试。</span>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+
+    if (variant === "modal") {
+        return (
+            <div className="modal-overlay calendar-edit-modal-overlay" onClick={onBack}>
+                <div className="calendar-edit-modal calendar-tz-modal" onClick={e => e.stopPropagation()}>
+                    <div className="calendar-theme-modal-head">
+                        <strong>时区与所在地</strong>
+                        <button type="button" onClick={onBack} className="calendar-icon-btn" aria-label="关闭">
+                            <X size={16} />
+                        </button>
+                    </div>
+                    <div className="hide-scrollbar" style={{ overflowY: "auto", minHeight: 0 }}>
+                        {body}
+                    </div>
+                </div>
+                {picker}
+            </div>
+        );
+    }
+
+    return (
+        <PageShell title="时区与所在地" onBack={onBack} className="absolute inset-0 z-[100]">
+            <div className="page-menu profile-settings-menu">
+                {body}
+            </div>
+            {picker}
         </PageShell>
     );
 }

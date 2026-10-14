@@ -9,6 +9,7 @@ import { getLunarInfoByIso } from "@/lib/lunar";
 
 const WEEKDAY_CN = ["日", "一", "二", "三", "四", "五", "六"];
 const WEEK_LABEL = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+const DAY_MS = 86400000;
 
 type MonthCell = {
   iso: string;
@@ -54,6 +55,24 @@ const ymOf = (iso: string) => {
   return { year: d.getFullYear(), month: d.getMonth() };
 };
 
+/** 包含指定日期的那一周（周日起）的 7 天 */
+function weekRowOf(iso: string): MonthCell[] {
+  const d = parseIsoDate(iso);
+  const sunday = new Date(d.getTime() - d.getDay() * DAY_MS);
+  return Array.from({ length: 7 }, (_, i) => {
+    const day = new Date(sunday.getTime() + i * DAY_MS);
+    const dayIso = formatIsoDate(day);
+    const lunar = getLunarInfoByIso(dayIso);
+    return {
+      iso: dayIso,
+      day: day.getDate(),
+      weekday: day.getDay(),
+      lunarLabel: lunar?.cellLabel ?? "",
+      lunarFirst: lunar?.isFirstDay ?? false,
+    };
+  });
+}
+
 export function CalendarMonthPage({
   todayIso,
   itemsByDate,
@@ -90,9 +109,11 @@ export function CalendarMonthPage({
   const [{ year, month }, setYm] = useState(() => ymOf(selectedDate));
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState(year);
-  const [agendaOpen, setAgendaOpen] = useState(false);
+  // collapsed=true：月历收成一行周条，下面是当天日程（下滑进入，上滑恢复）
+  const [collapsed, setCollapsed] = useState(false);
 
   const grid = useMemo(() => buildMonthGrid(year, month), [year, month]);
+  const weekRow = useMemo(() => weekRowOf(selectedDate), [selectedDate]);
 
   // 选中日期跑到别的月份时，月历跟着翻过去
   useEffect(() => {
@@ -105,7 +126,13 @@ export function CalendarMonthPage({
     setYm({ year: next.getFullYear(), month: next.getMonth() });
   };
 
-  // ── 手势：左右滑切换月份；下滑展开当天日程；上滑收起 ──
+  // 周条模式左右滑：按周移动选中日期
+  const shiftWeek = (delta: number) => {
+    const next = new Date(parseIsoDate(selectedDate).getTime() + delta * 7 * DAY_MS);
+    onSelectDate(formatIsoDate(next));
+  };
+
+  // ── 手势：左右滑切月/周；下滑收成周条看日程；上滑恢复月历 ──
   const gestureRef = useRef<{ x: number; y: number } | null>(null);
   const handlePointerDown = (e: ReactPointerEvent) => {
     gestureRef.current = { x: e.clientX, y: e.clientY };
@@ -117,12 +144,37 @@ export function CalendarMonthPage({
     const dx = e.clientX - start.x;
     const dy = e.clientY - start.y;
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.2) {
-      shiftMonth(dx < 0 ? 1 : -1);
+      if (collapsed) shiftWeek(dx < 0 ? 1 : -1);
+      else shiftMonth(dx < 0 ? 1 : -1);
     } else if (dy > 60 && Math.abs(dy) > Math.abs(dx) * 1.2) {
-      setAgendaOpen(true);
+      setCollapsed(true);
     } else if (dy < -60 && Math.abs(dy) > Math.abs(dx) * 1.2) {
-      setAgendaOpen(false);
+      setCollapsed(false);
     }
+  };
+
+  const renderCell = (cell: MonthCell, weekIndexFirst: boolean) => {
+    const items = itemsByDate.get(cell.iso);
+    const cycle = cycleMap?.get(cell.iso) ?? null;
+    return (
+      <button
+        key={cell.iso}
+        type="button"
+        className="calendar-month-cell"
+        data-today={cell.iso === todayIso ? "true" : undefined}
+        data-selected={cell.iso === selectedDate ? "true" : undefined}
+        style={weekIndexFirst ? { gridColumnStart: cell.weekday + 1 } : undefined}
+        aria-label={`${cell.iso}${items?.length ? `，${items.length}个日程` : ""}`}
+        onClick={() => onSelectDate(cell.iso)}
+      >
+        <span className="calendar-month-num">{cell.day}</span>
+        <span className={`calendar-month-lunar${cell.lunarFirst ? " is-first" : ""}`}>{cell.lunarLabel}</span>
+        <span className="calendar-month-dots" aria-hidden="true">
+          {cycle ? <i className="calendar-cycle-dot" data-type={cycle.type} /> : null}
+          {items && items.length > 0 ? <i className="calendar-event-dot" data-color={items[0].colorKey} /> : null}
+        </span>
+      </button>
+    );
   };
 
   const selectedDayItems = itemsByDate.get(selectedDate) ?? [];
@@ -175,105 +227,86 @@ export function CalendarMonthPage({
         ))}
       </div>
 
-      {/* 月历格子：左右滑切月，下滑开当天日程 */}
+      {/* 月历区：完整月历 ↔ 下滑收成单行周条 */}
       <div
         className="calendar-month-single"
+        data-collapsed={collapsed ? "true" : undefined}
         style={{ touchAction: "none" }}
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
       >
-        {grid.weeks.map((week, wi) => (
-          <div key={wi} className="calendar-month-week">
-            {week.map(cell => {
-              const items = itemsByDate.get(cell.iso);
-              const cycle = cycleMap?.get(cell.iso) ?? null;
-              return (
-                <button
-                  key={cell.iso}
-                  type="button"
-                  className="calendar-month-cell"
-                  data-today={cell.iso === todayIso ? "true" : undefined}
-                  data-selected={cell.iso === selectedDate ? "true" : undefined}
-                  style={{ gridColumnStart: cell.weekday + 1 }}
-                  aria-label={`${month + 1}月${cell.day}日${items?.length ? `，${items.length}个日程` : ""}`}
-                  onClick={() => {
-                    if (cell.iso === selectedDate) {
-                      // 再点一次已选中的日期：开/关当天日程面板
-                      setAgendaOpen(prev => !prev);
-                    } else {
-                      onSelectDate(cell.iso);
-                    }
-                  }}
-                >
-                  <span className="calendar-month-num">{cell.day}</span>
-                  <span className={`calendar-month-lunar${cell.lunarFirst ? " is-first" : ""}`}>{cell.lunarLabel}</span>
-                  <span className="calendar-month-dots" aria-hidden="true">
-                    {cycle ? <i className="calendar-cycle-dot" data-type={cycle.type} /> : null}
-                    {items && items.length > 0 ? <i className="calendar-event-dot" data-color={items[0].colorKey} /> : null}
-                  </span>
-                </button>
-              );
-            })}
+        {collapsed ? (
+          <div className="calendar-month-week calendar-month-week-single">
+            {weekRow.map(cell => renderCell(cell, false))}
           </div>
-        ))}
-      </div>
-
-      {/* 当天日程面板（下滑或再点选中日期展开） */}
-      <div className="calendar-agenda" data-open={agendaOpen ? "true" : undefined}>
+        ) : (
+          grid.weeks.map((week, wi) => (
+            <div key={wi} className="calendar-month-week">
+              {week.map(cell => renderCell(cell, wi === 0))}
+            </div>
+          ))
+        )}
+        {/* 拖动把手：点一下也可以切换月历/周条 */}
         <button
           type="button"
           className="calendar-agenda-handle"
-          onClick={() => setAgendaOpen(prev => !prev)}
-          aria-label={agendaOpen ? "收起当天日程" : "展开当天日程"}
+          onClick={() => setCollapsed(prev => !prev)}
+          aria-label={collapsed ? "展开月历" : "收起为周视图"}
         >
           <i />
         </button>
-        <div className="calendar-agenda-head">
-          <div className="calendar-agenda-title">
-            <strong>{selDate.getMonth() + 1}月{selDate.getDate()}日</strong>
-            <span>{WEEK_LABEL[selDate.getDay()]}{selLunar ? ` · ${selLunar.monthLabel}${selLunar.isFirstDay ? "" : selLunar.dayLabel}` : ""}</span>
-          </div>
-          <button
-            type="button"
-            className="calendar-icon-btn"
-            onClick={() => onOpenTimeline(selectedDate)}
-            aria-label="打开时间轴视图"
-            title="时间轴视图"
-          >
-            <CalendarDays size={16} />
-          </button>
-        </div>
-        {cyclePanel}
-        <div className="calendar-agenda-list hide-scrollbar">
-          {selectedDayItems.length === 0 ? (
-            <div className="calendar-agenda-empty">这一天没有日程</div>
-          ) : (
-            selectedDayItems.map(item => {
-              const bjStart = beijingTimeNote(item.date, item.startTime, ownerTimeZone);
-              const bjEnd = beijingTimeNote(item.date, item.endTime, ownerTimeZone);
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  className="calendar-agenda-item"
-                  data-color={item.colorKey}
-                  onClick={() => onEditItem(item)}
-                >
-                  <span className="calendar-agenda-item-title">
-                    {item.emoji ? `${item.emoji} ` : ""}{item.title}
-                  </span>
-                  <span className="calendar-agenda-item-meta">
-                    {item.startTime}–{item.endTime}
-                    {bjStart ? `（${bjStart}–${bjEnd.replace("北京 ", "")}）` : ""}
-                    {item.location ? ` · ${item.location}` : ""}
-                    {item.source === "generated" ? " · AI" : ""}
-                  </span>
-                </button>
-              );
-            })
-          )}
-        </div>
       </div>
+
+      {/* 当天日程面板（周条模式下展开） */}
+      {collapsed && (
+        <div className="calendar-agenda" data-open="true">
+          <div className="calendar-agenda-head">
+            <div className="calendar-agenda-title">
+              <strong>{selDate.getMonth() + 1}月{selDate.getDate()}日</strong>
+              <span>{WEEK_LABEL[selDate.getDay()]}{selLunar ? ` · ${selLunar.monthLabel}${selLunar.isFirstDay ? "" : selLunar.dayLabel}` : ""}</span>
+            </div>
+            <button
+              type="button"
+              className="calendar-icon-btn"
+              onClick={() => onOpenTimeline(selectedDate)}
+              aria-label="打开时间轴视图"
+              title="时间轴视图"
+            >
+              <CalendarDays size={16} />
+            </button>
+          </div>
+          {cyclePanel}
+          <div className="calendar-agenda-list hide-scrollbar">
+            {selectedDayItems.length === 0 ? (
+              <div className="calendar-agenda-empty">这一天没有日程</div>
+            ) : (
+              selectedDayItems.map(item => {
+                const bjStart = beijingTimeNote(item.date, item.startTime, ownerTimeZone);
+                const bjEnd = beijingTimeNote(item.date, item.endTime, ownerTimeZone);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="calendar-agenda-item"
+                    data-color={item.colorKey}
+                    onClick={() => onEditItem(item)}
+                  >
+                    <span className="calendar-agenda-item-title">
+                      {item.emoji ? `${item.emoji} ` : ""}{item.title}
+                    </span>
+                    <span className="calendar-agenda-item-meta">
+                      {item.startTime}–{item.endTime}
+                      {bjStart ? `（${bjStart}–${bjEnd.replace("北京 ", "")}）` : ""}
+                      {item.location ? ` · ${item.location}` : ""}
+                      {item.source === "generated" ? " · AI" : ""}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="calendar-float-bar">
         <button type="button" className="calendar-pill-btn" onClick={gotoToday}>
