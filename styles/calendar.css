@@ -1602,32 +1602,34 @@
   justify-content: center;
 }
 
-/* 选中日期（非今天）：圆环高亮 */
-.calendar-month-cell[data-selected="true"] .calendar-month-num {
-  box-shadow: 0 0 0 2px var(--c-calendar-sel-bg);
+/* 选中日期：实心圆（今天仍保持红色实心，选中态仅加深字重） */
+.calendar-month-cell[data-selected="true"]:not([data-today="true"]) .calendar-month-num {
+  background: var(--c-calendar-ink);
+  color: var(--c-calendar-bg);
   font-weight: 700;
 }
 
 .calendar-month-cell[data-selected="true"][data-today="true"] .calendar-month-num {
-  box-shadow: 0 0 0 2px var(--c-calendar-sel-bg), 0 0 0 4px var(--c-calendar-bg);
+  font-weight: 800;
 }
 
 /* 当天日程面板 */
 .calendar-agenda {
-  flex-shrink: 0;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  max-height: 0;
   overflow: hidden;
-  transition: max-height 0.28s ease;
-  background: var(--c-calendar-glass);
   border-top: 1px solid var(--c-calendar-hair);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
 }
 
-.calendar-agenda[data-open="true"] {
-  max-height: 42%;
+/* 周条模式：月历区不再撑满，高度给日程面板 */
+.calendar-month-single[data-collapsed="true"] {
+  flex: 0 0 auto;
+}
+
+.calendar-month-single[data-collapsed="true"] .calendar-month-week-single {
+  min-height: 56px;
 }
 
 .calendar-agenda-handle {
@@ -1719,4 +1721,11 @@
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   padding: 4px 0 8px;
+}
+
+/* 时区弹窗：与主题弹窗同款卡片 */
+.calendar-tz-modal {
+  max-height: 70%;
+  display: flex;
+  flex-direction: column;
 }

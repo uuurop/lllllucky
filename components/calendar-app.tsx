@@ -649,7 +649,7 @@ export function PhoneCalendarApp({
       </div>
 
       {showTimezonePanel && (
-        <TimezoneSettingsPanel scope="all" onBack={() => { setShowTimezonePanel(false); setTzTick(t => t + 1); }} />
+        <TimezoneSettingsPanel scope="all" variant="modal" onBack={() => { setShowTimezonePanel(false); setTzTick(t => t + 1); }} />
       )}
 
       {showThemePanel && (

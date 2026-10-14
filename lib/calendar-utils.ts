@@ -201,7 +201,7 @@ export function localWallTimeToBeijing(
         };
         // 迭代两次逼近真实 UTC 时刻（覆盖夏令时切换边缘）
         let utc = guessUtc + (guessUtc - wallAt(guessUtc));
-        utc = guessUtc + (guessUtc - wallAt(utc));
+        utc = utc + (guessUtc - wallAt(utc));
         if (Number.isNaN(utc)) return null;
         const bj = partsInZone(utc, BEIJING_TZ);
         if (!bj) return null;
