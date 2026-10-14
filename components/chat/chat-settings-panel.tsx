@@ -53,6 +53,7 @@ import { isAgentComputerConfigured } from "@/lib/agent-computer";
 import { CharacterComputerPage } from "./character-computer-page";
 import { resolveUserIdentity, loadBindingConfig, loadPresets, resolveBinding, loadApiConfigs, getCharacterApiOverride, setCharacterApiOverride } from "@/lib/settings-storage";
 import type { ApiConfig } from "@/lib/settings-types";
+import { hydrateKvDb } from "@/lib/kv-db";
 import { getStatusRegionConfig, saveStatusRegionConfig, presetSupportsStatusRegion, isCustomStatusRegionActive, STATUS_REGION_SCHEME_TARGET, STATUS_REGION_UPDATED_EVENT, type StatusRegionConfig } from "@/lib/chat-status-region";
 import { downloadFile } from "@/lib/download-utils";
 import { getSchemes, saveScheme, deleteScheme, type CSSScheme } from "@/lib/css-scheme-storage";
@@ -349,6 +350,11 @@ export function ChatSettingsPanel({
     const [isBlacklisted, setIsBlacklisted] = useState(!!session.isBlacklisted);
     const [showConfirmBlacklist, setShowConfirmBlacklist] = useState(false);
     useEffect(() => {
+        // kv 数据在 IndexedDB 里，异步水合完成前读到的是空；水合后强制重读一次
+        void hydrateKvDb().then(() => {
+            setBindingProfiles(loadBindingProfiles());
+            setBindingTick(t => t + 1);
+        });
         const onUpdated = () => { setBindingProfiles(loadBindingProfiles()); setBindingTick(t => t + 1); };
         window.addEventListener(BINDING_PROFILES_UPDATED_EVENT, onUpdated);
         window.addEventListener("settings-bindings-updated", onUpdated);
