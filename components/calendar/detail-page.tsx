@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import { Columns2, Settings2 } from "lucide-react";
 import type { CalendarScheduleItem } from "@/lib/calendar-types";
 import type { MenstrualDayState } from "@/lib/menstrual-storage";
-import { formatIsoDate, parseIsoDate, timeToMinutes } from "@/lib/calendar-utils";
+import { formatIsoDate, parseIsoDate, timeToMinutes, beijingTimeNote } from "@/lib/calendar-utils";
 import { getLunarInfoByIso } from "@/lib/lunar";
 
 const WEEKDAY_CN = ["日", "一", "二", "三", "四", "五", "六"];
@@ -19,6 +19,15 @@ const sundayStartOf = (iso: string) => {
   const d = parseIsoDate(iso);
   return addDaysIso(iso, -d.getDay());
 };
+
+/** 日程时间旁的北京时间区间备注，如 "（北京 21:30–次日 01:00）"；无时区返回 "" */
+function beijingRangeNote(item: CalendarScheduleItem, timeZone?: string): string {
+  if (!timeZone) return "";
+  const s = beijingTimeNote(item.date, item.startTime, timeZone);
+  const e = beijingTimeNote(item.date, item.endTime, timeZone);
+  if (!s) return "";
+  return `（${s}–${e.replace("北京 ", "")}）`;
+}
 
 type PositionedEvent = {
   item: CalendarScheduleItem;
@@ -85,6 +94,7 @@ export function CalendarDetailPage({
   cycleMap,
   cyclePanel,
   daysPerPage,
+  ownerTimeZone,
   onOpenDaysPicker,
   onOpenCycleSettings,
   onBack,
@@ -99,6 +109,8 @@ export function CalendarDetailPage({
   cyclePanel: ReactNode;
   /** 时间轴一页显示的天数（1/2/3/5/7） */
   daysPerPage: number;
+  /** 角色所在地时区：日程时间按当地展示，旁边备注北京时间 */
+  ownerTimeZone?: string;
   /** 打开“每页天数”选择弹窗 */
   onOpenDaysPicker: () => void;
   /** 周期设置入口（仅用户视图传入），渲染在右上角 */
@@ -440,6 +452,7 @@ export function CalendarDetailPage({
                         <b>{pos.item.emoji ? `${pos.item.emoji} ` : ""}{pos.item.title}</b>
                         <span>
                           {pos.item.startTime}–{pos.item.endTime}
+                          {beijingRangeNote(pos.item, ownerTimeZone)}
                           {pos.item.location ? ` · ${pos.item.location}` : ""}
                           {pos.item.source === "generated" ? " · AI" : ""}
                         </span>

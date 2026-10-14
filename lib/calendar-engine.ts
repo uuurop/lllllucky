@@ -28,7 +28,9 @@ import {
   isCalendarTimeRangeAllowed,
   normalizeTime,
   sanitizeScheduleEmoji,
+  todayIsoInZone,
 } from "./calendar-utils";
+import { buildCharacterTimeContext } from "./character-time";
 
 type CalendarAssemblerResolved = {
   apiConfig: ApiConfig;
@@ -36,6 +38,8 @@ type CalendarAssemblerResolved = {
   regexes: RegexConfig[];
   llmMessages: LLMMessage[];
   ownerName: string;
+  /** 角色所在地时区（IANA）；用户或未绑定时为 undefined */
+  timeZone?: string;
 };
 
 function buildSyntheticUserCharacter(identity: UserIdentity | null): Character {
@@ -59,10 +63,11 @@ function buildSyntheticUserCharacter(identity: UserIdentity | null): Character {
   };
 }
 
-function buildCalendarTriggerInstruction(ownerName: string, weekDates: string[]): string {
+function buildCalendarTriggerInstruction(ownerName: string, weekDates: string[], timeZone?: string): string {
   return [
     `请为${ownerName}生成 ${weekDates[0]} 到 ${weekDates[6]} 这一周的日程安排。`,
     "请参考已有日程，生成这一周的完整日程安排。",
+    ...(timeZone ? [`${ownerName}所在地时区为 ${timeZone}，日期与所有开始/结束时间都按当地时间填写（不要换算成北京时间）。`] : []),
     "每行一条，格式：YYYY-MM-DD|周几|开始时间|结束时间|地点|emoji|事项。emoji 段填一个最贴合该事项的表情符号。",
     "作息时间不受限制（早起、夜跑、通宵都可以安排），但每一天最多 5 条日程，宁缺毋滥。",
   ].join("\n");
@@ -216,6 +221,8 @@ async function resolveCalendarAssemblerInput(
     unifiedRecentItems,
     customStickerNames: ownerType === "character" ? getCustomStickerNames(ownerId) : "",
     customStickerExample: ownerType === "character" ? getCustomStickerExample(ownerId) : "",
+    // 角色绑定了所在地时区时，提示词里的「当前时间」用当地时间
+    timeContext: buildCharacterTimeContext(character.timeZone),
   } as AssemblerInput);
 
   return {
@@ -224,6 +231,7 @@ async function resolveCalendarAssemblerInput(
     regexes,
     llmMessages,
     ownerName: character.name,
+    timeZone: ownerType === "character" ? character.timeZone || undefined : undefined,
   };
 }
 
@@ -242,7 +250,7 @@ export async function generateWeeklyCalendarSchedule(
   try {
     const resolved = await resolveCalendarAssemblerInput(ownerType, ownerId, weekStart);
     const weekDates = getWeekDates(weekStart);
-    const triggerInstruction = buildCalendarTriggerInstruction(resolved.ownerName, weekDates);
+    const triggerInstruction = buildCalendarTriggerInstruction(resolved.ownerName, weekDates, resolved.timeZone);
 
     const messages: LLMMessage[] = [
       ...resolved.llmMessages,
@@ -287,7 +295,7 @@ export async function previewCalendarPromptPayload(
   }
   const resolved = await resolveCalendarAssemblerInput(ownerType, ownerId, weekStart);
   const weekDates = getWeekDates(weekStart);
-  const triggerInstruction = buildCalendarTriggerInstruction(resolved.ownerName, weekDates);
+  const triggerInstruction = buildCalendarTriggerInstruction(resolved.ownerName, weekDates, resolved.timeZone);
 
   const messages: LLMMessage[] = [
     ...resolved.llmMessages,

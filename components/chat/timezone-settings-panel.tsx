@@ -102,7 +102,7 @@ type ContactRow = {
     timeZone: string;
 };
 
-export function TimezoneSettingsPanel({ onBack }: { onBack: () => void }) {
+export function TimezoneSettingsPanel({ onBack, scope = "contacts" }: { onBack: () => void; scope?: "contacts" | "all" }) {
     const [tick, setTick] = useState(0);
     const [pickerFor, setPickerFor] = useState<ContactRow | null>(null);
     const [pickerSearch, setPickerSearch] = useState("");
@@ -111,9 +111,11 @@ export function TimezoneSettingsPanel({ onBack }: { onBack: () => void }) {
 
     const rows = useMemo<ContactRow[]>(() => {
         const chars = loadCharacters();
-        return loadChatContacts()
-            .map(c => {
-                const char = chars.find(ch => ch.id === c.characterId);
+        // scope=all：日历等场景需要给所有角色（包括没加好友的）绑定时区
+        const source = scope === "all" ? chars.map(ch => ch.id) : loadChatContacts().map(c => c.characterId);
+        return source
+            .map(id => {
+                const char = chars.find(ch => ch.id === id);
                 if (!char) return null;
                 return {
                     characterId: char.id,
@@ -126,7 +128,7 @@ export function TimezoneSettingsPanel({ onBack }: { onBack: () => void }) {
             .sort((a, b) => a.name.localeCompare(b.name));
         // tick 用于保存后强制刷新
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [tick]);
+    }, [tick, scope]);
 
     const setContactTimeZone = (characterId: string, timeZone: string | undefined) => {
         const chars = loadCharacters();
