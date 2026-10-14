@@ -6,7 +6,7 @@
 // 集中管理入口，不会产生第二套时间逻辑。
 
 import { useMemo, useState } from "react";
-import { ChevronRight, Globe, Search, X, Check } from "lucide-react";
+import { ChevronLeft, ChevronRight, Globe, Search, X, Check } from "lucide-react";
 import { PageShell } from "@/components/ui/page-shell";
 import { Input } from "@/components/ui/form";
 import { loadChatContacts, resolveChatAvatar } from "@/lib/chat-storage";
@@ -205,7 +205,75 @@ export function TimezoneSettingsPanel({ onBack, scope = "contacts", variant = "p
         </>
     );
 
-    const picker = pickerFor && (
+    const pickerList = (
+        <>
+            <div className="relative">
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--c-icon)]" />
+                <Input
+                    type="text"
+                    value={pickerSearch}
+                    onChange={(e) => setPickerSearch(e.target.value)}
+                    placeholder="搜索时区，如 Tokyo、London、New_York"
+                    style={{ paddingLeft: 32 }}
+                />
+            </div>
+            <div className="flex flex-col gap-1">
+                <button
+                    className="menu-item"
+                    onClick={() => { setContactTimeZone(pickerFor!.characterId, undefined); setPickerFor(null); }}
+                >
+                    <div className="menu-label-group">
+                        <span className="menu-label">跟随系统时区</span>
+                        <span className="menu-desc">{systemTimeZone}（{utcOffsetLabel(systemTimeZone)}）</span>
+                    </div>
+                    <div className="menu-right">
+                        {!pickerFor!.timeZone && <Check size={16} className="text-[var(--c-success)]" />}
+                    </div>
+                </button>
+                {pickerOptions.map(tz => {
+                    const selected = pickerFor!.timeZone === tz;
+                    const localTime = currentTimeIn(tz);
+                    return (
+                        <button
+                            key={tz}
+                            className="menu-item"
+                            onClick={() => { setContactTimeZone(pickerFor!.characterId, tz); setPickerFor(null); }}
+                        >
+                            <div className="menu-label-group">
+                                <span className="menu-label">{tz}</span>
+                                <span className="menu-desc">{utcOffsetLabel(tz)}{localTime ? ` · 当地 ${localTime}` : ""}</span>
+                            </div>
+                            <div className="menu-right">
+                                {selected && <Check size={16} className="text-[var(--c-success)]" />}
+                            </div>
+                        </button>
+                    );
+                })}
+                {pickerOptions.length === 0 && (
+                    <span className="menu-desc px-2 py-3">没有匹配的时区，换个关键词试试。</span>
+                )}
+            </div>
+        </>
+    );
+
+    // 弹窗版：选择器也是同款居中卡片；返回键只退回「时区与所在地」列表，
+    // 遮罩点击只关选择器（stopPropagation 挡住外层弹窗的关闭）
+    const picker = pickerFor && (variant === "modal" ? (
+        <div className="modal-overlay calendar-edit-modal-overlay" onClick={e => { e.stopPropagation(); setPickerFor(null); }}>
+            <div className="calendar-edit-modal calendar-tz-modal calendar-tz-picker" onClick={e => e.stopPropagation()}>
+                <div className="calendar-theme-modal-head">
+                    <button type="button" onClick={() => setPickerFor(null)} className="calendar-icon-btn" aria-label="返回时区列表">
+                        <ChevronLeft size={16} />
+                    </button>
+                    <strong>{pickerFor.name} 的所在地</strong>
+                    <span className="calendar-icon-btn" style={{ opacity: 0, pointerEvents: "none" }} aria-hidden="true"><ChevronLeft size={16} /></span>
+                </div>
+                <div className="calendar-tz-body hide-scrollbar">
+                    {pickerList}
+                </div>
+            </div>
+        </div>
+    ) : (
         <div className="modal-overlay modal-overlay-bottom">
             <div className="modal-sheet" data-ui="modal-sheet">
                 <div className="modal-header" data-ui="modal-header">
@@ -214,56 +282,11 @@ export function TimezoneSettingsPanel({ onBack, scope = "contacts", variant = "p
                     <span className="modal-header-btn modal-header-btn-action" style={{ opacity: 0, pointerEvents: "none" }}><Check size={18} /></span>
                 </div>
                 <div className="modal-body hide-scrollbar flex flex-col gap-3 pb-10" data-ui="modal-body">
-                    <div className="relative">
-                        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--c-icon)]" />
-                        <Input
-                            type="text"
-                            value={pickerSearch}
-                            onChange={(e) => setPickerSearch(e.target.value)}
-                            placeholder="搜索时区，如 Tokyo、London、New_York"
-                            style={{ paddingLeft: 32 }}
-                        />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                        <button
-                            className="menu-item"
-                            onClick={() => { setContactTimeZone(pickerFor.characterId, undefined); setPickerFor(null); }}
-                        >
-                            <div className="menu-label-group">
-                                <span className="menu-label">跟随系统时区</span>
-                                <span className="menu-desc">{systemTimeZone}（{utcOffsetLabel(systemTimeZone)}）</span>
-                            </div>
-                            <div className="menu-right">
-                                {!pickerFor.timeZone && <Check size={16} className="text-[var(--c-success)]" />}
-                            </div>
-                        </button>
-                        {pickerOptions.map(tz => {
-                            const selected = pickerFor.timeZone === tz;
-                            const localTime = currentTimeIn(tz);
-                            return (
-                                <button
-                                    key={tz}
-                                    className="menu-item"
-                                    onClick={() => { setContactTimeZone(pickerFor.characterId, tz); setPickerFor(null); }}
-                                >
-                                    <div className="menu-label-group">
-                                        <span className="menu-label">{tz}</span>
-                                        <span className="menu-desc">{utcOffsetLabel(tz)}{localTime ? ` · 当地 ${localTime}` : ""}</span>
-                                    </div>
-                                    <div className="menu-right">
-                                        {selected && <Check size={16} className="text-[var(--c-success)]" />}
-                                    </div>
-                                </button>
-                            );
-                        })}
-                        {pickerOptions.length === 0 && (
-                            <span className="menu-desc px-2 py-3">没有匹配的时区，换个关键词试试。</span>
-                        )}
-                    </div>
+                    {pickerList}
                 </div>
             </div>
         </div>
-    );
+    ));
 
     if (variant === "modal") {
         return (
