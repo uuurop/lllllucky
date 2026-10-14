@@ -6211,12 +6211,15 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                         </div>}
                                         {showBlockedBadge && (
                                             <div
-                                                className="self-center shrink-0 w-[16px] h-[16px] rounded-full flex items-center justify-center"
+                                                className="self-center shrink-0 w-[18px] h-[18px] rounded-full flex items-center justify-center"
                                                 style={{ background: "#F43530" }}
                                                 title="对方已被你拉黑，消息被拒收"
                                                 aria-label="对方已被你拉黑，消息被拒收"
                                             >
-                                                <span className="text-white text-[10px] font-bold leading-none" style={{ marginTop: -1 }}>!</span>
+                                                <svg viewBox="0 0 16 16" width="12" height="12" style={{ display: "block" }} aria-hidden="true">
+                                                    <rect x="7.1" y="2.6" width="1.8" height="6.2" rx="0.9" fill="#fff" />
+                                                    <circle cx="8" cy="12.2" r="1.15" fill="#fff" />
+                                                </svg>
                                             </div>
                                         )}
                                         {msg.role !== "user" && !isSilentThought && !isEmptyBubble && hasFoldedPanel && (
