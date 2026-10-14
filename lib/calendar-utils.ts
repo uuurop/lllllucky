@@ -154,3 +154,78 @@ export function formatWeekRangeLabel(weekStart: string): string {
 export function getOwnerStorageKey(ownerType: string, ownerId: string): string {
   return `${ownerType}:${ownerId}`;
 }
+
+// ── 角色时区：日程时间换算 ─────────────────────────
+// 角色的日程时间一律按「TA 所在地（character.timeZone）的当地时间」存储与展示；
+// 这里提供 当地时间 ↔ 北京时间 的换算与「当地今天」工具。
+
+import { normalizeTimeZone } from "./character-time";
+
+const BEIJING_TZ = "Asia/Shanghai";
+
+function partsInZone(instant: number, timeZone: string): { y: number; mo: number; d: number; h: number; mi: number } | null {
+    try {
+        const parts = new Intl.DateTimeFormat("en-US", {
+            timeZone,
+            year: "numeric", month: "2-digit", day: "2-digit",
+            hour: "2-digit", minute: "2-digit", second: "2-digit",
+            hourCycle: "h23",
+        }).formatToParts(new Date(instant));
+        const get = (type: string) => parts.find(p => p.type === type)?.value ?? "";
+        const h = Number(get("hour")) % 24;
+        return { y: Number(get("year")), mo: Number(get("month")), d: Number(get("day")), h, mi: Number(get("minute")) };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 把「某时区的当地墙钟时间」换算成北京时间。
+ * 例：纽约 2026-10-14 09:00 → { date: "2026-10-14", time: "21:00", dayShift: 0 }
+ * dayShift：北京日期 - 当地日期（-1/0/1），跨天时用于标注「次日/前日」。
+ */
+export function localWallTimeToBeijing(
+    dateIso: string,
+    time: string,
+    timeZone: string | undefined,
+): { date: string; time: string; dayShift: number } | null {
+    const tz = normalizeTimeZone(timeZone);
+    if (!tz || tz === BEIJING_TZ) return null;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateIso) || !/^\d{2}:\d{2}$/.test(time)) return null;
+    try {
+        const guessUtc = Date.parse(`${dateIso}T${time}:00Z`);
+        const wallAt = (t: number): number => {
+            const p = partsInZone(t, tz);
+            if (!p) return Number.NaN;
+            return Date.UTC(p.y, p.mo - 1, p.d, p.h, p.mi);
+        };
+        // 迭代两次逼近真实 UTC 时刻（覆盖夏令时切换边缘）
+        let utc = guessUtc + (guessUtc - wallAt(guessUtc));
+        utc = guessUtc + (guessUtc - wallAt(utc));
+        if (Number.isNaN(utc)) return null;
+        const bj = partsInZone(utc, BEIJING_TZ);
+        if (!bj) return null;
+        const bjDate = `${bj.y}-${String(bj.mo).padStart(2, "0")}-${String(bj.d).padStart(2, "0")}`;
+        const dayShift = Math.round((Date.parse(`${bjDate}T00:00:00Z`) - Date.parse(`${dateIso}T00:00:00Z`)) / 86400000);
+        return { date: bjDate, time: `${String(bj.h).padStart(2, "0")}:${String(bj.mi).padStart(2, "0")}`, dayShift };
+    } catch {
+        return null;
+    }
+}
+
+/** 日程时间旁的北京时间备注，如 "北京 21:30"；跨天带「次日/前日」。无时区或与北京一致返回 ""。 */
+export function beijingTimeNote(dateIso: string, time: string, timeZone: string | undefined): string {
+    const bj = localWallTimeToBeijing(dateIso, time, timeZone);
+    if (!bj) return "";
+    const suffix = bj.dayShift > 0 ? "次日 " : bj.dayShift < 0 ? "前日 " : "";
+    return `北京 ${suffix}${bj.time}`;
+}
+
+/** 该时区的「今天」（YYYY-MM-DD）；非法时区回退为本机今天。 */
+export function todayIsoInZone(timeZone: string | undefined): string {
+    const tz = normalizeTimeZone(timeZone);
+    if (!tz) return formatIsoDate(new Date());
+    const p = partsInZone(Date.now(), tz);
+    if (!p) return formatIsoDate(new Date());
+    return `${p.y}-${String(p.mo).padStart(2, "0")}-${String(p.d).padStart(2, "0")}`;
+}

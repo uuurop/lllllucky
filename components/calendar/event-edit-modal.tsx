@@ -3,7 +3,7 @@
 import { Check, ChevronLeft, Trash2 } from "lucide-react";
 import { Input } from "../ui/form";
 import type { CalendarColorKey } from "@/lib/calendar-types";
-import { CALENDAR_COLOR_KEYS } from "@/lib/calendar-utils";
+import { CALENDAR_COLOR_KEYS, beijingTimeNote } from "@/lib/calendar-utils";
 
 export type CalendarEventDraft = {
   id?: string;
@@ -37,17 +37,22 @@ const COLOR_LABELS: Record<CalendarColorKey, string> = {
 
 export function CalendarEventEditModal({
   draft,
+  timeZone,
   onChange,
   onSave,
   onDelete,
   onClose,
 }: {
   draft: CalendarEventDraft;
+  /** 角色所在地时区：设置后开始/结束时间按当地时间理解，并备注北京时间 */
+  timeZone?: string;
   onChange: (next: CalendarEventDraft) => void;
   onSave: () => void;
   onDelete: () => void;
   onClose: () => void;
 }) {
+  const bjStart = timeZone ? beijingTimeNote(draft.date, draft.startTime, timeZone) : "";
+  const bjEnd = timeZone ? beijingTimeNote(draft.date, draft.endTime, timeZone) : "";
   return (
     <div className="modal-overlay calendar-edit-modal-overlay" onClick={onClose}>
       <div className="calendar-edit-modal" data-ui="calendar-edit-modal" onClick={e => e.stopPropagation()}>
@@ -89,20 +94,22 @@ export function CalendarEventEditModal({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="menu-desc ml-1">开始时间</label>
+              <label className="menu-desc ml-1">开始时间{timeZone ? "（当地）" : ""}</label>
               <Input
                 type="time"
                 value={draft.startTime}
                 onChange={e => onChange({ ...draft, startTime: e.target.value })}
               />
+              {bjStart ? <span className="menu-desc ml-1">{bjStart}</span> : null}
             </div>
             <div className="flex flex-col gap-1">
-              <label className="menu-desc ml-1">结束时间</label>
+              <label className="menu-desc ml-1">结束时间{timeZone ? "（当地）" : ""}</label>
               <Input
                 type="time"
                 value={draft.endTime}
                 onChange={e => onChange({ ...draft, endTime: e.target.value })}
               />
+              {bjEnd ? <span className="menu-desc ml-1">{bjEnd}</span> : null}
             </div>
           </div>
 

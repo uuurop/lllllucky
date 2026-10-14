@@ -23,12 +23,15 @@ import { createDefaultScheduleDraft, generateWeeklyCalendarSchedule } from "@/li
 import { loadCharacters } from "@/lib/character-storage";
 import { loadChatSessions } from "@/lib/chat-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
+import { normalizeTimeZone } from "@/lib/character-time";
+import { TimezoneSettingsPanel } from "./chat/timezone-settings-panel";
 import {
   formatIsoDate,
   getWeekStartIso,
   parseIsoDate,
   pickScheduleColorKey,
   sanitizeScheduleEmoji,
+  todayIsoInZone,
 } from "@/lib/calendar-utils";
 import {
   buildMenstrualDayMap,
@@ -143,6 +146,9 @@ export function PhoneCalendarApp({
   const [menstrualRecords, setMenstrualRecords] = useState<MenstrualRecord[]>(() => loadMenstrualRecords());
   const [showThemePanel, setShowThemePanel] = useState(false);
   const [showDaysPanel, setShowDaysPanel] = useState(false);
+  const [showTimezonePanel, setShowTimezonePanel] = useState(false);
+  // 时区面板保存后 bump 一下，让 ownerTimeZone 重新读取角色卡
+  const [tzTick, setTzTick] = useState(0);
   const [showMenstrualSettings, setShowMenstrualSettings] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [showGenerateConfirm, setShowGenerateConfirm] = useState(false);
@@ -197,7 +203,22 @@ export function PhoneCalendarApp({
     () => owners.find(owner => owner.key === selectedKey) ?? owners[0] ?? null,
     [owners, selectedKey],
   );
+  // 当前选中角色的所在地时区（IANA）；用户或未绑定为 undefined
+  const ownerTimeZone = useMemo(() => {
+    if (!selectedOwner || selectedOwner.ownerType !== "character") return undefined;
+    const char = loadCharacters().find(c => c.id === selectedOwner.ownerId);
+    return normalizeTimeZone(char?.timeZone);
+    // tzTick：时区面板保存后强制重读
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOwner, tzTick]);
+  // 角色绑定了时区时，「今天」按 TA 当地时间算（决定自动生成的"本周"与月历高亮）
+  const ownerTodayIso = useMemo(
+    () => (ownerTimeZone ? todayIsoInZone(ownerTimeZone) : todayIso),
+    [ownerTimeZone, todayIso],
+  );
   const weekStart = useMemo(() => getWeekStartIso(parseIsoDate(selectedDate)), [selectedDate]);
+  // 自动生成（每周）用的周起点：按角色当地的今天
+  const autoWeekStart = useMemo(() => getWeekStartIso(parseIsoDate(ownerTodayIso)), [ownerTodayIso]);
 
   const itemsByDate = useMemo(() => {
     const map = new Map<string, CalendarScheduleItem[]>();
@@ -256,18 +277,18 @@ export function PhoneCalendarApp({
     return () => window.removeEventListener("calendar-updated", handler);
   }, [selectedOwner]);
 
-  // 每周自动生成（仅角色）
+  // 每周自动生成（仅角色；本周起点按角色当地时间）
   useEffect(() => {
     if (!selectedOwner || !autoGenerateEnabled || selectedOwner.ownerType !== "character" || isGenerating) return;
-    const autoKey = `${selectedOwner.ownerType}:${selectedOwner.ownerId}:${weekStart}`;
+    const autoKey = `${selectedOwner.ownerType}:${selectedOwner.ownerId}:${autoWeekStart}`;
     if (autoAttemptedRef.current.has(autoKey)) return;
     const existing = loadOwnerCalendarPlans(selectedOwner.ownerType, selectedOwner.ownerId)
-      .find(plan => plan.weekStart === weekStart);
+      .find(plan => plan.weekStart === autoWeekStart);
     if (existing && existing.items.length > 0) return;
     void (async () => {
       autoAttemptedRef.current.add(autoKey);
       setIsGenerating(true);
-      const result = await generateWeeklyCalendarSchedule(selectedOwner.ownerType, selectedOwner.ownerId, weekStart);
+      const result = await generateWeeklyCalendarSchedule(selectedOwner.ownerType, selectedOwner.ownerId, autoWeekStart);
       setIsGenerating(false);
       if (!result.success) {
         onNotice?.(result.error || "自动生成失败");
@@ -277,7 +298,7 @@ export function PhoneCalendarApp({
       onNotice?.("已自动生成本周角色日程");
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoGenerateEnabled, isGenerating, selectedOwner, weekStart]);
+  }, [autoGenerateEnabled, isGenerating, selectedOwner, autoWeekStart]);
 
   // ── 事件编辑 ──
   const openNewDraft = (date: string) => {
@@ -505,7 +526,7 @@ export function PhoneCalendarApp({
           onClick={() => {
             setFabMenuOpen(false);
             setSelectedKey(owner.key);
-            setSelectedDate(todayIso);
+            setSelectedDate(ownerTodayFor(owner));
           }}
         >
           <Avatar src={owner.avatar || undefined} name={owner.name} size="md" />
@@ -514,6 +535,13 @@ export function PhoneCalendarApp({
       ))}
     </section>
   );
+
+  // 切换联系人时，「今天」按 TA 的当地时区算
+  const ownerTodayFor = (owner: OwnerOption): string => {
+    if (owner.ownerType !== "character") return todayIso;
+    const tz = normalizeTimeZone(loadCharacters().find(c => c.id === owner.ownerId)?.timeZone);
+    return tz ? todayIsoInZone(tz) : todayIso;
+  };
 
   const openDetail = (date: string) => {
     setSelectedDate(date);
@@ -527,23 +555,30 @@ export function PhoneCalendarApp({
       <div className="calendar-app">
         {view === "month" ? (
           <CalendarMonthPage
-            todayIso={todayIso}
+            todayIso={ownerTodayIso}
             itemsByDate={itemsByDate}
             cycleMap={cycleMap}
             ownerStrip={ownerStrip}
-            onPickDay={openDetail}
+            selectedDate={selectedDate}
+            onSelectDate={setSelectedDate}
+            onOpenTimeline={openDetail}
+            onEditItem={openEditItem}
+            cyclePanel={cyclePanel}
+            ownerTimeZone={ownerTimeZone}
             onClose={onClose}
             onOpenTheme={() => setShowThemePanel(true)}
+            onOpenTimezone={() => setShowTimezonePanel(true)}
           />
         ) : (
           <CalendarDetailPage
             key={detailKey}
             initialDate={selectedDate}
-            todayIso={todayIso}
+            todayIso={ownerTodayIso}
             itemsByDate={itemsByDate}
             cycleMap={cycleMap}
             cyclePanel={cyclePanel}
             daysPerPage={config.daysPerPage}
+            ownerTimeZone={ownerTimeZone}
             onOpenDaysPicker={() => setShowDaysPanel(true)}
             onOpenCycleSettings={selectedOwner?.ownerType === "user" ? openMenstrualSettings : null}
             onBack={() => setView("month")}
@@ -612,6 +647,10 @@ export function PhoneCalendarApp({
           </button>
         </div>
       </div>
+
+      {showTimezonePanel && (
+        <TimezoneSettingsPanel scope="all" onBack={() => { setShowTimezonePanel(false); setTzTick(t => t + 1); }} />
+      )}
 
       {showThemePanel && (
         <div className="modal-overlay calendar-edit-modal-overlay" onClick={() => setShowThemePanel(false)}>
@@ -716,6 +755,7 @@ export function PhoneCalendarApp({
       {editingItem && (
         <CalendarEventEditModal
           draft={editingItem}
+          timeZone={ownerTimeZone}
           onChange={next => setEditingItem(prev => (prev ? { ...prev, ...next } : next))}
           onSave={handleSaveDraft}
           onDelete={handleDeleteItem}

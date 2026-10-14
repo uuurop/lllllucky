@@ -1533,3 +1533,190 @@
     animation: none !important;
   }
 }
+
+/* ── 月历页 v2：单月视图 + 左右滑切月 + 下滑看当天日程 ── */
+
+.calendar-page-month-v2 {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.calendar-month-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 2px 16px 6px;
+}
+
+.calendar-month-switch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 18px;
+  border: 1px solid var(--c-calendar-glass-edge);
+  border-radius: 999px;
+  background: var(--c-calendar-glass);
+  color: var(--c-calendar-ink);
+  font-size: calc(15px * var(--app-text-scale, 1));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow:
+    inset 0 1.5px 1.5px var(--c-calendar-glass-hi),
+    inset 0 -1px 1.5px var(--c-calendar-glass-edge);
+  transition: transform 0.15s ease;
+}
+
+.calendar-month-switch-btn:active {
+  transform: scale(0.96);
+}
+
+.calendar-month-tz-note {
+  font-size: calc(11px * var(--app-text-scale, 1));
+  color: var(--c-calendar-sub);
+  white-space: nowrap;
+}
+
+.calendar-month-single {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding: 0 10px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.calendar-month-single .calendar-month-week {
+  flex: 1;
+  min-height: 0;
+}
+
+.calendar-month-single .calendar-month-cell {
+  justify-content: center;
+}
+
+/* 选中日期（非今天）：圆环高亮 */
+.calendar-month-cell[data-selected="true"] .calendar-month-num {
+  box-shadow: 0 0 0 2px var(--c-calendar-sel-bg);
+  font-weight: 700;
+}
+
+.calendar-month-cell[data-selected="true"][data-today="true"] .calendar-month-num {
+  box-shadow: 0 0 0 2px var(--c-calendar-sel-bg), 0 0 0 4px var(--c-calendar-bg);
+}
+
+/* 当天日程面板 */
+.calendar-agenda {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.28s ease;
+  background: var(--c-calendar-glass);
+  border-top: 1px solid var(--c-calendar-hair);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.calendar-agenda[data-open="true"] {
+  max-height: 42%;
+}
+
+.calendar-agenda-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 0 2px;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.calendar-agenda-handle i {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--c-calendar-faint);
+}
+
+.calendar-agenda-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 16px 6px;
+}
+
+.calendar-agenda-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--c-calendar-ink);
+}
+
+.calendar-agenda-title strong {
+  font-size: calc(17px * var(--app-text-scale, 1));
+  font-weight: 800;
+}
+
+.calendar-agenda-title span {
+  font-size: calc(12px * var(--app-text-scale, 1));
+  color: var(--c-calendar-sub);
+}
+
+.calendar-agenda-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 12px calc(12px + env(safe-area-inset-bottom, 0px));
+}
+
+.calendar-agenda-empty {
+  padding: 18px 4px;
+  text-align: center;
+  font-size: calc(13px * var(--app-text-scale, 1));
+  color: var(--c-calendar-faint);
+}
+
+.calendar-agenda-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 12px;
+  background: var(--c-calendar-surface);
+  border-left: 3px solid var(--ev-fg, var(--c-calendar-sub));
+  color: var(--c-calendar-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.calendar-agenda-item-title {
+  font-size: calc(14px * var(--app-text-scale, 1));
+  font-weight: 600;
+}
+
+.calendar-agenda-item-meta {
+  font-size: calc(11px * var(--app-text-scale, 1));
+  color: var(--c-calendar-sub);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 月份选择弹窗的月格 */
+.calendar-month-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 4px 0 8px;
+}
