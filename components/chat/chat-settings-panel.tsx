@@ -57,8 +57,16 @@ import { downloadFile } from "@/lib/download-utils";
 import { getSchemes, saveScheme, deleteScheme, type CSSScheme } from "@/lib/css-scheme-storage";
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { KeyboardAutoSendDebounceItem } from "@/components/chat/keyboard-auto-send-debounce-item";
-import { ChevronRight, Image as ImageIcon, ImagePlus, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Coins, type LucideIcon } from "lucide-react";
+import { ChevronRight, Image as ImageIcon, ImagePlus, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Coins, Layers, type LucideIcon } from "lucide-react";
 import { CURRENCIES, FOREIGN_CURRENCY_CODES, type CurrencyCode } from "@/lib/exchange-rate";
+import {
+    BINDING_PROFILES_UPDATED_EVENT,
+    applyBindingProfile,
+    describeBindingProfile,
+    isBindingProfileActive,
+    loadBindingProfiles,
+    type BindingProfile,
+} from "@/lib/binding-profiles";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { ConfirmDialog } from "@/components/ui/modal";
@@ -325,6 +333,19 @@ export function ChatSettingsPanel({
     const [currencyOverride, setCurrencyOverride] = useState<string | undefined>(() =>
         loadChatContacts().find(c => c.characterId === session.contactId)?.currency);
     const [editingCurrency, setEditingCurrency] = useState(false);
+    // 配置方案：绑定页保存的整套绑定，一键套用到当前角色
+    const [bindingProfiles, setBindingProfiles] = useState<BindingProfile[]>(() => loadBindingProfiles());
+    const [bindingTick, setBindingTick] = useState(0);
+    const [appliedProfileName, setAppliedProfileName] = useState("");
+    useEffect(() => {
+        const onUpdated = () => { setBindingProfiles(loadBindingProfiles()); setBindingTick(t => t + 1); };
+        window.addEventListener(BINDING_PROFILES_UPDATED_EVENT, onUpdated);
+        window.addEventListener("settings-bindings-updated", onUpdated);
+        return () => {
+            window.removeEventListener(BINDING_PROFILES_UPDATED_EVENT, onUpdated);
+            window.removeEventListener("settings-bindings-updated", onUpdated);
+        };
+    }, []);
     const [videoBackground, setVideoBackground] = useState<string>(session.videoBackground || "");
     const [voiceBackground, setVoiceBackground] = useState<string>(session.voiceBackground || "");
     const [isPinned, setIsPinned] = useState(session.isPinned || false);
@@ -1048,6 +1069,47 @@ export function ChatSettingsPanel({
                         </button>
                     )}
                 </div>
+
+                {/* 配置方案：一键切换整套专属绑定（方案在 设置→配置绑定→角色专属绑定 里保存） */}
+                {!session.isGroup && bindingProfiles.length > 0 && (
+                    <div className="menu-group">
+                        <div className="menu-item" style={{ cursor: "default" }}>
+                            <ChatInfoIcon icon={Layers} color={BINDING_ACCENTS.preset} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">配置方案</span>
+                                <span className="menu-desc">
+                                    {appliedProfileName ? `已套用「${appliedProfileName}」` : "一键切换 TA 的整套绑定"}
+                                </span>
+                            </div>
+                        </div>
+                        {bindingProfiles.map(profile => {
+                            // bindingTick 变更时重新比对当前绑定
+                            void bindingTick;
+                            const active = isBindingProfileActive(session.contactId, profile);
+                            return (
+                                <button
+                                    key={profile.id}
+                                    className="menu-item"
+                                    style={{ paddingLeft: 72 }}
+                                    onClick={() => {
+                                        applyBindingProfile(session.contactId, profile);
+                                        setAppliedProfileName(profile.name);
+                                        setBindingTick(t => t + 1);
+                                    }}
+                                >
+                                    <div className="menu-label-group">
+                                        <span className="menu-label">{profile.name}</span>
+                                        <span className="menu-desc">{describeBindingProfile(profile)}</span>
+                                    </div>
+                                    <div className="menu-right">
+                                        {active && <span className="menu-desc mr-1" style={{ color: "var(--c-success)" }}>使用中</span>}
+                                        <ChevronRight size={14} />
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
 
                 {/* Group member management */}
                 {session.isGroup && (

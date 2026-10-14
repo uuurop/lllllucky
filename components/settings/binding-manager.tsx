@@ -13,6 +13,7 @@ import {
     Layers,
     Mic,
     RotateCcw,
+    Save,
     User,
     UserPlus,
     Wrench,
@@ -59,6 +60,7 @@ import {
     ensureSettingsStorageHydrated,
 } from "@/lib/settings-storage";
 import { hydrateKvDb } from "@/lib/kv-db";
+import { createBindingProfile } from "@/lib/binding-profiles";
 import type { UserIdentity } from "@/components/settings/user-identity";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
@@ -123,6 +125,9 @@ export function BindingManager() {
     const [activeSlotSheetField, setActiveSlotSheetField] = useState<BindingField | null>(null);
     const [activeAuxSheetField, setActiveAuxSheetField] = useState<AuxBindingField | null>(null);
     const [showCharacterPicker, setShowCharacterPicker] = useState(false);
+    const [showSaveProfile, setShowSaveProfile] = useState(false);
+    const [profileNameDraft, setProfileNameDraft] = useState("");
+    const [savedProfileNotice, setSavedProfileNotice] = useState("");
     const [isLoaded, setIsLoaded] = useState(false);
 
     const reloadData = () => {
@@ -996,11 +1001,64 @@ export function BindingManager() {
             {renderAuxPickerDialog()}
             {renderCharacterPickerDialog()}
 
+            {/* 保存当前角色整套绑定为命名方案 */}
+            {showSaveProfile && (
+                <div className="modal-overlay" onClick={() => setShowSaveProfile(false)}>
+                    <div
+                        className="modal-dialog"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="保存为方案"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <span className="modal-header-title">保存为方案</span>
+                        <span className="menu-desc text-center">把当前角色的整套专属绑定（角色默认 + 各应用覆盖）存下来，之后可以在聊天信息页一键套用到其他角色。</span>
+                        <input
+                            type="text"
+                            value={profileNameDraft}
+                            onChange={e => setProfileNameDraft(e.target.value)}
+                            placeholder="方案名称，例如：高性能GPT"
+                            maxLength={40}
+                            className="ui-input w-full"
+                        />
+                        <div className="flex gap-3 w-full">
+                            <button type="button" onClick={() => setShowSaveProfile(false)} className="ui-btn ui-btn-ghost flex-1">取消</button>
+                            <button
+                                type="button"
+                                disabled={!profileNameDraft.trim()}
+                                onClick={() => {
+                                    const profile = createBindingProfile(profileNameDraft, selectedCharId);
+                                    if (profile) {
+                                        setSavedProfileNotice(`已保存方案「${profile.name}」，可到聊天信息页切换`);
+                                        setTimeout(() => setSavedProfileNotice(""), 4000);
+                                    }
+                                    setShowSaveProfile(false);
+                                }}
+                                className="ui-btn ui-btn-success flex-1"
+                            >保存</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Level 2: Character binding details */}
             {level === "character" && (
                 <>
                     <section className="flex flex-col gap-3">
-                        <p className="settings-menu-section-title">Character Defaults</p>
+                        <div className="flex items-center justify-between gap-3">
+                            <p className="settings-menu-section-title min-w-0">Character Defaults</p>
+                            <button
+                                type="button"
+                                onClick={() => { setProfileNameDraft(""); setShowSaveProfile(true); }}
+                                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-[18px] bg-black px-3 text-[calc(11px*var(--app-text-scale,1))] font-bold text-white shadow-sm transition-all hover:bg-gray-800 hover:shadow-md active:scale-95 focus:outline-none"
+                            >
+                                <Save size={14} strokeWidth={1.8} />
+                                保存为方案
+                            </button>
+                        </div>
+                        {savedProfileNotice && (
+                            <p className="text-[calc(12px*var(--app-text-scale,1))] font-semibold text-emerald-600 px-1">{savedProfileNotice}</p>
+                        )}
                         {renderCharacterSlotCards()}
                     </section>
 

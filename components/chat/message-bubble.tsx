@@ -100,7 +100,7 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
         case "contact_card":
             return <ContactCardBubble msg={msg} characterId={characterId} />;
         case "payment_request":
-            return <PaymentRequestBubble msg={msg} charName={charName} userName={userName} onShowDetail={onShowDetail} />;
+            return <PaymentRequestBubble msg={msg} charName={charName} userName={userName} currency={resolveMessageCurrency(msg.mediaData, { isGroup: groupSize != null, characterId })} onShowDetail={onShowDetail} />;
         case "app_card":
             return <AppCardBubble msg={msg} characterId={characterId} characterName={msg.senderName || charName} />;
         case "image":
@@ -751,8 +751,9 @@ function TransferBubble({ msg, charName, userName, currency = "CNY", onShowDetai
 
 // ── Payment Request ─────────────────────────────
 
-function PaymentRequestBubble({ msg, charName, userName, onShowDetail }: {
+function PaymentRequestBubble({ msg, charName, userName, currency = "CNY", onShowDetail }: {
     msg: ChatMessage; charName?: string; userName?: string;
+    currency?: CurrencyCode;
     onShowDetail?: (msg: ChatMessage) => void;
 }) {
     const d = msg.mediaData;
@@ -760,7 +761,11 @@ function PaymentRequestBubble({ msg, charName, userName, onShowDetail }: {
     const isPaid = status === "paid";
     const isDeclined = status === "declined";
     const requester = msg.role === "user" ? (userName || "你") : (msg.senderName || charName || "对方");
-    const amount = typeof d?.amount === "number" ? d.amount.toFixed(2) : d?.paymentRequestAmountLabel || "0.00";
+    const isForeign = currency !== "CNY";
+    const amountNum = typeof d?.amount === "number" ? d.amount : Number(d?.paymentRequestAmountLabel ?? 0);
+    const amount = isForeign && Number.isFinite(amountNum)
+        ? formatForeignAmount(amountNum, currency)
+        : (typeof d?.amount === "number" ? d.amount.toFixed(2) : d?.paymentRequestAmountLabel || "0.00");
     const itemsText = d?.paymentRequestItemsText || (d?.paymentRequestItems || [])
         .map(item => `${item.title}/${item.detail}/${item.priceLabel}/${item.quantityLabel}`)
         .join("; ");
@@ -777,7 +782,10 @@ function PaymentRequestBubble({ msg, charName, userName, onShowDetail }: {
                 </div>
                 <div className="flex-1 min-w-0">
                     <div className="text-white ts-12 ui-text-white-85">{requester}发起代付请求</div>
-                    <div className="text-white ts-24 font-bold mt-1">¥{amount}</div>
+                    <div className="text-white ts-24 font-bold mt-1">{isForeign ? amount : `¥${amount}`}</div>
+                    {isForeign && Number.isFinite(amountNum) && (
+                        <div className="ts-12 mt-0.5 ui-text-white-85">≈ ¥{foreignToCny(amountNum, currency).toFixed(2)}</div>
+                    )}
                     <div className="ts-12 mt-1 ui-text-white-85 line-clamp-2">{itemsText || "商品订单"}</div>
                 </div>
             </div>
@@ -1644,8 +1652,8 @@ export function MediaDetailModal({ msg, userName, groupSize, currency = "CNY", o
     const [paymentError, setPaymentError] = useState("");
     if (!isRedPacket && !isTransfer && !isPaymentRequest) return null;
 
-    // 外币只体现在红包/转账上，代付保持人民币
-    const moneyCurrency = isPaymentRequest ? "CNY" : currency;
+    // 红包/转账/代付都按消息货币计价；外币只影响展示与钱包边界的换算
+    const moneyCurrency = currency;
     const isForeign = moneyCurrency !== "CNY";
     const fmtMoney = (n: number) => isForeign ? formatForeignAmount(n, moneyCurrency) : `¥${n.toFixed(2)}`;
 
@@ -1715,7 +1723,9 @@ export function MediaDetailModal({ msg, userName, groupSize, currency = "CNY", o
     };
 
     const handlePaymentRequestAccept = () => {
-        const amount = Number(d?.amount ?? d?.paymentRequestAmountLabel ?? 0);
+        const rawAmount = Number(d?.amount ?? d?.paymentRequestAmountLabel ?? 0);
+        // 外币代付：AI 写的是当地货币金额，扣款前换算成人民币元
+        const amount = isForeign ? foreignToCny(rawAmount, moneyCurrency) : rawAmount;
         const safeAmount = Number.isFinite(amount) ? Math.max(0, Math.round(amount * 100) / 100) : 0;
         if (safeAmount <= 0) {
             setPaymentError("金额无效，无法代付。");
@@ -1726,7 +1736,9 @@ export function MediaDetailModal({ msg, userName, groupSize, currency = "CNY", o
             title: "代付",
             detail: formatShoppingPaymentRequestHistory({
                 amount: safeAmount,
-                amountLabel: d?.paymentRequestAmountLabel,
+                amountLabel: isForeign
+                    ? `${formatForeignAmount(rawAmount, moneyCurrency)}（≈${safeAmount.toFixed(2)}元）`
+                    : d?.paymentRequestAmountLabel,
                 items: d?.paymentRequestItems,
                 itemsText: d?.paymentRequestItemsText,
             }),
