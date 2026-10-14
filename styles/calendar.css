@@ -1728,7 +1728,13 @@
   max-height: 64%;
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 8px;
+  padding: 16px 14px 12px;
+}
+
+/* 时区选择器（同款居中卡片，比主弹窗略高） */
+.calendar-tz-picker {
+  max-height: 72%;
 }
 
 .calendar-tz-body {
