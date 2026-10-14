@@ -5972,15 +5972,17 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     const isMediaBubble = (renderMsg.mediaType && CHAT_MEDIA_BUBBLE_TYPES.has(renderMsg.mediaType)) || isStandaloneHtmlPreview;
                     // Empty bubble: no visible content AND no visual media AND no folded panel.
                     const isEmptyBubble = !isVisualMedia && !visibleContent && uiRole(msg) !== "system" && !hasFoldedPanel;
-                    // 拉黑期间 TA 发来的消息：旁边挂微信同款红色感叹号（只标拉黑后收到的正常气泡）
+                    // 拉黑期间 TA 发来的消息：旁边挂微信同款红色感叹号（解除拉黑后历史消息保留标记）
                     const blockedSinceMs = session.blacklistedAt ? new Date(session.blacklistedAt).getTime() : NaN;
+                    const blockedEndMs = session.blacklistEndedAt ? new Date(session.blacklistEndedAt).getTime() : NaN;
+                    const msgMs = new Date(msg.createdAt).getTime();
+                    const inBlacklistPeriod = Number.isFinite(blockedSinceMs) && msgMs >= blockedSinceMs
+                        && (session.isBlacklisted ? true : Number.isFinite(blockedEndMs) && msgMs <= blockedEndMs);
                     const showBlockedBadge = !session.isGroup
-                        && !!session.isBlacklisted
                         && msg.role === "assistant"
                         && !isSilentThought
                         && !isEmptyBubble
-                        && Number.isFinite(blockedSinceMs)
-                        && new Date(msg.createdAt).getTime() >= blockedSinceMs
+                        && inBlacklistPeriod
                         && !msg.mediaData?.hiddenInChat;
                     const selectableStoredId = getSelectableStoredMessageId(msg);
                     const isMultiSelectable = isMultiSelectMode && !!selectableStoredId && !hiddenEmpty;

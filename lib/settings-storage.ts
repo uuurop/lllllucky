@@ -1039,6 +1039,10 @@ export function resolveBinding(
         applySlot(charBinding.defaults);
     }
 
+    // 聊天信息页的角色单独 API：压过角色默认（含配置方案套用的），应用级覆盖仍然最高
+    const apiOverride = config.characterApiOverrides?.[characterId];
+    if (apiOverride) resolved.apiConfigId = apiOverride;
+
     if (appId && config.appDefaults?.[appId]) {
         applySlot(config.appDefaults[appId]!);
     }
@@ -1048,6 +1052,22 @@ export function resolveBinding(
     }
 
     return resolved;
+}
+
+/** 读取角色单独 API 覆盖（聊天信息页「API 设置」） */
+export function getCharacterApiOverride(characterId: string): string | undefined {
+    if (!characterId) return undefined;
+    return loadBindingConfig().characterApiOverrides?.[characterId];
+}
+
+/** 设置/清除角色单独 API 覆盖；传 undefined 恢复跟随配置方案 */
+export function setCharacterApiOverride(characterId: string, apiConfigId?: string): void {
+    if (!characterId) return;
+    const config = loadBindingConfig();
+    const overrides = { ...(config.characterApiOverrides ?? {}) };
+    if (apiConfigId) overrides[characterId] = apiConfigId;
+    else delete overrides[characterId];
+    saveBindingConfig({ ...config, characterApiOverrides: overrides });
 }
 
 /**

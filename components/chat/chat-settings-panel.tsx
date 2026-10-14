@@ -51,7 +51,8 @@ import { triggerDeleteFriendReaction } from "@/lib/friend-request-engine";
 import { loadCharacters } from "@/lib/character-storage";
 import { isAgentComputerConfigured } from "@/lib/agent-computer";
 import { CharacterComputerPage } from "./character-computer-page";
-import { resolveUserIdentity, loadBindingConfig, loadPresets, resolveBinding } from "@/lib/settings-storage";
+import { resolveUserIdentity, loadBindingConfig, loadPresets, resolveBinding, loadApiConfigs, getCharacterApiOverride, setCharacterApiOverride } from "@/lib/settings-storage";
+import type { ApiConfig } from "@/lib/settings-types";
 import { getStatusRegionConfig, saveStatusRegionConfig, presetSupportsStatusRegion, isCustomStatusRegionActive, STATUS_REGION_SCHEME_TARGET, STATUS_REGION_UPDATED_EVENT, type StatusRegionConfig } from "@/lib/chat-status-region";
 import { downloadFile } from "@/lib/download-utils";
 import { getSchemes, saveScheme, deleteScheme, type CSSScheme } from "@/lib/css-scheme-storage";
@@ -341,6 +342,9 @@ export function ChatSettingsPanel({
     const [bindingProfiles, setBindingProfiles] = useState<BindingProfile[]>(() => loadBindingProfiles());
     const [bindingTick, setBindingTick] = useState(0);
     const [showProfilePicker, setShowProfilePicker] = useState(false);
+    // 角色单独 API：优先级高于配置方案
+    const [showApiPicker, setShowApiPicker] = useState(false);
+    const [apiConfigList, setApiConfigList] = useState<ApiConfig[]>([]);
     // 拉黑：开关状态跟随会话，打开开关前先弹确认框
     const [isBlacklisted, setIsBlacklisted] = useState(!!session.isBlacklisted);
     const [showConfirmBlacklist, setShowConfirmBlacklist] = useState(false);
@@ -359,6 +363,14 @@ export function ChatSettingsPanel({
         if (session.isGroup) return "";
         return bindingProfiles.find(p => isBindingProfileActive(session.contactId, p))?.name || "";
     }, [bindingProfiles, bindingTick, session.isGroup, session.contactId]);
+    // 角色单独 API 覆盖的名字（优先级高于配置方案里的 API）
+    const apiOverrideName = useMemo(() => {
+        void bindingTick;
+        if (session.isGroup) return "";
+        const id = getCharacterApiOverride(session.contactId);
+        if (!id) return "";
+        return loadApiConfigs().find(c => c.id === id)?.name || "已失效的配置";
+    }, [bindingTick, session.isGroup, session.contactId]);
     const [videoBackground, setVideoBackground] = useState<string>(session.videoBackground || "");
     const [voiceBackground, setVoiceBackground] = useState<string>(session.voiceBackground || "");
     const [isPinned, setIsPinned] = useState(session.isPinned || false);
@@ -1083,15 +1095,27 @@ export function ChatSettingsPanel({
                     )}
                 </div>
 
-                {/* 配置方案：收进弹窗，点「配置方案」行才展开（方案在 设置→配置绑定→角色专属绑定 里保存） */}
-                {!session.isGroup && bindingProfiles.length > 0 && (
+                {/* 配置方案 + API 设置：方案收进弹窗；API 单独指定，优先级高于方案 */}
+                {!session.isGroup && (
                     <div className="menu-group">
+                        {bindingProfiles.length > 0 && (
                         <button className="menu-item" onClick={() => setShowProfilePicker(true)}>
                             <ChatInfoIcon icon={Layers} color={BINDING_ACCENTS.preset} />
                             <div className="menu-label-group">
                                 <span className="menu-label">配置方案</span>
                                 <span className="menu-desc">
                                     {activeProfileName ? `使用中：${activeProfileName}` : `${bindingProfiles.length} 套方案，点这里切换`}
+                                </span>
+                            </div>
+                            <div className="menu-right"><ChevronRight size={16} /></div>
+                        </button>
+                        )}
+                        <button className="menu-item" onClick={() => { setApiConfigList(loadApiConfigs()); setShowApiPicker(true); }}>
+                            <ChatInfoIcon icon={Code} color={BINDING_ACCENTS.api} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">API 设置</span>
+                                <span className="menu-desc">
+                                    {apiOverrideName ? `使用中：${apiOverrideName}` : "单独指定 TA 用的 API，优先于配置方案"}
                                 </span>
                             </div>
                             <div className="menu-right"><ChevronRight size={16} /></div>
@@ -1496,7 +1520,7 @@ export function ChatSettingsPanel({
                                         setShowConfirmBlacklist(true);
                                     } else {
                                         setIsBlacklisted(false);
-                                        updateSession({ isBlacklisted: false });
+                                        updateSession({ isBlacklisted: false, blacklistEndedAt: new Date().toISOString() });
                                         onRequestBlacklistReaction?.("unblock");
                                     }
                                 }}
@@ -1768,6 +1792,68 @@ export function ChatSettingsPanel({
                                     </div>
                                 );
                             })}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal: Character API Picker */}
+            {showApiPicker && !session.isGroup && (
+                <div className="modal-overlay" onClick={() => setShowApiPicker(false)}>
+                    <div className="modal-dialog" onClick={e => e.stopPropagation()}>
+                        <div className="relative w-full flex items-center justify-center">
+                            <button
+                                type="button"
+                                onClick={() => setShowApiPicker(false)}
+                                className="absolute left-0 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full text-[var(--c-icon)]"
+                                aria-label="关闭"
+                            >
+                                <X size={18} />
+                            </button>
+                            <div className="ts-17 font-semibold text-[var(--c-text)]">选择 API</div>
+                        </div>
+                        <div className="ts-12 text-center text-[var(--c-icon)] -mt-1">只对这个角色生效，优先级高于配置方案里的 API</div>
+                        <div className="w-full flex flex-col">
+                            {(() => {
+                                const currentOverride = getCharacterApiOverride(session.contactId);
+                                const rows: Array<{ id?: string; name: string; desc: string }> = [
+                                    { id: undefined, name: "跟随配置方案 / 绑定", desc: "不单独指定，按配置绑定走" },
+                                    ...apiConfigList.map(c => ({ id: c.id, name: c.name || "未命名配置", desc: c.baseUrl || "" })),
+                                ];
+                                return rows.map(row => {
+                                    const active = row.id === currentOverride || (!row.id && !currentOverride);
+                                    return (
+                                        <div
+                                            key={row.id ?? "inherit"}
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={() => {
+                                                setCharacterApiOverride(session.contactId, row.id);
+                                                setBindingTick(t => t + 1);
+                                                setShowApiPicker(false);
+                                            }}
+                                            onKeyDown={e => {
+                                                if (e.key === "Enter" || e.key === " ") {
+                                                    e.preventDefault();
+                                                    setCharacterApiOverride(session.contactId, row.id);
+                                                    setBindingTick(t => t + 1);
+                                                    setShowApiPicker(false);
+                                                }
+                                            }}
+                                            className="w-full flex items-center gap-2 px-3 py-3.5 rounded-xl cursor-pointer text-left"
+                                            style={active ? { background: "color-mix(in srgb, var(--c-success) 8%, transparent)" } : undefined}
+                                        >
+                                            <span className="w-5 shrink-0 flex items-center justify-center" style={{ color: "var(--c-success)" }}>
+                                                {active && <Check size={16} />}
+                                            </span>
+                                            <span className="flex-1 min-w-0 flex flex-col">
+                                                <span className="ts-15 text-[var(--c-text)] truncate">{row.name}</span>
+                                                <span className="ts-12 text-[var(--c-icon)] truncate">{row.desc}</span>
+                                            </span>
+                                        </div>
+                                    );
+                                });
+                            })()}
                         </div>
                     </div>
                 </div>
@@ -2057,7 +2143,7 @@ export function ChatSettingsPanel({
                     cancelLabel="取消"
                     onConfirm={() => {
                         setIsBlacklisted(true);
-                        updateSession({ isBlacklisted: true, blacklistedAt: new Date().toISOString() });
+                        updateSession({ isBlacklisted: true, blacklistedAt: new Date().toISOString(), blacklistEndedAt: undefined });
                         setShowConfirmBlacklist(false);
                         onRequestBlacklistReaction?.("block");
                     }}
