@@ -57,11 +57,12 @@ import { downloadFile } from "@/lib/download-utils";
 import { getSchemes, saveScheme, deleteScheme, type CSSScheme } from "@/lib/css-scheme-storage";
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { KeyboardAutoSendDebounceItem } from "@/components/chat/keyboard-auto-send-debounce-item";
-import { ChevronRight, Image as ImageIcon, ImagePlus, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Coins, Layers, type LucideIcon } from "lucide-react";
+import { ChevronRight, Check, Image as ImageIcon, ImagePlus, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Coins, Layers, type LucideIcon } from "lucide-react";
 import { CURRENCIES, FOREIGN_CURRENCY_CODES, type CurrencyCode } from "@/lib/exchange-rate";
 import {
     BINDING_PROFILES_UPDATED_EVENT,
     applyBindingProfile,
+    deleteBindingProfile,
     describeBindingProfile,
     isBindingProfileActive,
     loadBindingProfiles,
@@ -333,10 +334,10 @@ export function ChatSettingsPanel({
     const [currencyOverride, setCurrencyOverride] = useState<string | undefined>(() =>
         loadChatContacts().find(c => c.characterId === session.contactId)?.currency);
     const [editingCurrency, setEditingCurrency] = useState(false);
-    // 配置方案：绑定页保存的整套绑定，一键套用到当前角色
+    // 配置方案：绑定页保存的整套绑定，收在「配置方案」弹窗里一键套用
     const [bindingProfiles, setBindingProfiles] = useState<BindingProfile[]>(() => loadBindingProfiles());
     const [bindingTick, setBindingTick] = useState(0);
-    const [appliedProfileName, setAppliedProfileName] = useState("");
+    const [showProfilePicker, setShowProfilePicker] = useState(false);
     useEffect(() => {
         const onUpdated = () => { setBindingProfiles(loadBindingProfiles()); setBindingTick(t => t + 1); };
         window.addEventListener(BINDING_PROFILES_UPDATED_EVENT, onUpdated);
@@ -346,6 +347,12 @@ export function ChatSettingsPanel({
             window.removeEventListener("settings-bindings-updated", onUpdated);
         };
     }, []);
+    // 当前角色正在使用的方案名（绑定内容逐字段比对）
+    const activeProfileName = useMemo(() => {
+        void bindingTick; // 套用/外部修改后强制重新比对
+        if (session.isGroup) return "";
+        return bindingProfiles.find(p => isBindingProfileActive(session.contactId, p))?.name || "";
+    }, [bindingProfiles, bindingTick, session.isGroup, session.contactId]);
     const [videoBackground, setVideoBackground] = useState<string>(session.videoBackground || "");
     const [voiceBackground, setVoiceBackground] = useState<string>(session.voiceBackground || "");
     const [isPinned, setIsPinned] = useState(session.isPinned || false);
@@ -1070,44 +1077,19 @@ export function ChatSettingsPanel({
                     )}
                 </div>
 
-                {/* 配置方案：一键切换整套专属绑定（方案在 设置→配置绑定→角色专属绑定 里保存） */}
+                {/* 配置方案：收进弹窗，点「配置方案」行才展开（方案在 设置→配置绑定→角色专属绑定 里保存） */}
                 {!session.isGroup && bindingProfiles.length > 0 && (
                     <div className="menu-group">
-                        <div className="menu-item" style={{ cursor: "default" }}>
+                        <button className="menu-item" onClick={() => setShowProfilePicker(true)}>
                             <ChatInfoIcon icon={Layers} color={BINDING_ACCENTS.preset} />
                             <div className="menu-label-group">
                                 <span className="menu-label">配置方案</span>
                                 <span className="menu-desc">
-                                    {appliedProfileName ? `已套用「${appliedProfileName}」` : "一键切换 TA 的整套绑定"}
+                                    {activeProfileName ? `使用中：${activeProfileName}` : `${bindingProfiles.length} 套方案，点这里切换`}
                                 </span>
                             </div>
-                        </div>
-                        {bindingProfiles.map(profile => {
-                            // bindingTick 变更时重新比对当前绑定
-                            void bindingTick;
-                            const active = isBindingProfileActive(session.contactId, profile);
-                            return (
-                                <button
-                                    key={profile.id}
-                                    className="menu-item"
-                                    style={{ paddingLeft: 72 }}
-                                    onClick={() => {
-                                        applyBindingProfile(session.contactId, profile);
-                                        setAppliedProfileName(profile.name);
-                                        setBindingTick(t => t + 1);
-                                    }}
-                                >
-                                    <div className="menu-label-group">
-                                        <span className="menu-label">{profile.name}</span>
-                                        <span className="menu-desc">{describeBindingProfile(profile)}</span>
-                                    </div>
-                                    <div className="menu-right">
-                                        {active && <span className="menu-desc mr-1" style={{ color: "var(--c-success)" }}>使用中</span>}
-                                        <ChevronRight size={14} />
-                                    </div>
-                                </button>
-                            );
-                        })}
+                            <div className="menu-right"><ChevronRight size={16} /></div>
+                        </button>
                     </div>
                 )}
 
@@ -1692,6 +1674,71 @@ export function ChatSettingsPanel({
                             })}
                         </div>
                         <button onClick={() => setEditingCurrency(false)} className="ui-btn ui-btn-ghost w-full">取消</button>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal: Binding Profile Picker */}
+            {showProfilePicker && !session.isGroup && (
+                <div className="modal-overlay" onClick={() => setShowProfilePicker(false)}>
+                    <div className="modal-dialog" onClick={e => e.stopPropagation()}>
+                        <div className="relative w-full flex items-center justify-center">
+                            <button
+                                type="button"
+                                onClick={() => setShowProfilePicker(false)}
+                                className="absolute left-0 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full text-[var(--c-icon)]"
+                                aria-label="关闭"
+                            >
+                                <X size={18} />
+                            </button>
+                            <div className="ts-17 font-semibold text-[var(--c-text)]">选择方案</div>
+                        </div>
+                        <div className="w-full flex flex-col">
+                            {bindingProfiles.map(profile => {
+                                const active = profile.name === activeProfileName;
+                                return (
+                                    <div
+                                        key={profile.id}
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => {
+                                            applyBindingProfile(session.contactId, profile);
+                                            setBindingTick(t => t + 1);
+                                            setShowProfilePicker(false);
+                                        }}
+                                        onKeyDown={e => {
+                                            if (e.key === "Enter" || e.key === " ") {
+                                                e.preventDefault();
+                                                applyBindingProfile(session.contactId, profile);
+                                                setBindingTick(t => t + 1);
+                                                setShowProfilePicker(false);
+                                            }
+                                        }}
+                                        className="w-full flex items-center gap-2 px-3 py-3.5 rounded-xl cursor-pointer text-left"
+                                        style={active ? { background: "color-mix(in srgb, var(--c-success) 8%, transparent)" } : undefined}
+                                    >
+                                        <span className="w-5 shrink-0 flex items-center justify-center" style={{ color: "var(--c-success)" }}>
+                                            {active && <Check size={16} />}
+                                        </span>
+                                        <span className="flex-1 min-w-0 flex flex-col">
+                                            <span className="ts-15 text-[var(--c-text)] truncate">{profile.name}</span>
+                                            <span className="ts-12 text-[var(--c-icon)]">{describeBindingProfile(profile)}</span>
+                                        </span>
+                                        <button
+                                            type="button"
+                                            aria-label={`删除方案 ${profile.name}`}
+                                            className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full text-[var(--c-icon)]"
+                                            onClick={e => {
+                                                e.stopPropagation();
+                                                deleteBindingProfile(profile.id);
+                                            }}
+                                        >
+                                            <Trash2 size={15} />
+                                        </button>
+                                    </div>
+                                );
+                            })}
+                        </div>
                     </div>
                 </div>
             )}
