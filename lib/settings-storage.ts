@@ -1039,10 +1039,6 @@ export function resolveBinding(
         applySlot(charBinding.defaults);
     }
 
-    // 聊天信息页的角色单独 API：压过角色默认（含配置方案套用的），应用级覆盖仍然最高
-    const apiOverride = config.characterApiOverrides?.[characterId];
-    if (apiOverride) resolved.apiConfigId = apiOverride;
-
     if (appId && config.appDefaults?.[appId]) {
         applySlot(config.appDefaults[appId]!);
     }
@@ -1050,6 +1046,10 @@ export function resolveBinding(
     if (appId && charBinding?.appOverrides[appId]) {
         applySlot(charBinding.appOverrides[appId]!);
     }
+
+    // 聊天信息页的角色单独 API：最高优先级，压过角色默认、配置方案和应用级覆盖
+    const apiOverride = config.characterApiOverrides?.[characterId];
+    if (apiOverride) resolved.apiConfigId = apiOverride;
 
     return resolved;
 }
