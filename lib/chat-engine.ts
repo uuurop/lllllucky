@@ -24,6 +24,8 @@ import {
     getAvatarCandidatesInfo,
     getChatNickname,
     resolveContactCurrency,
+    markSessionMessagesRead,
+    resolveUserReadNoReplyAt,
 } from "./chat-storage";
 import { extractTextToolDirectiveText, stripTextToolDirectives } from "./text-tool-protocol";
 import type { ApiConfig, PresetConfig, Prompt, PromptOrderEntry, RegexConfig } from "./settings-types";
@@ -1897,6 +1899,11 @@ export async function buildChatPromptMessages(
         )
         : "";
 
+    // 已读回执：进入提示词构建 = TA 读到了会话里所有用户消息（在线/离线/推送兜底都走这里）
+    markSessionMessagesRead(session.id, "user");
+    // 已读不回：最后一条 TA 消息已被对方读过、此后对方没有新消息时，把时间带给提示词
+    const userReadNoReplyAt = session.isGroup ? undefined : resolveUserReadNoReplyAt(history);
+
     const llmMessages = assemblePromptPayload({
         character,
         history: promptHistory,
@@ -1926,6 +1933,7 @@ export async function buildChatPromptMessages(
         chatNickname: session.isGroup ? undefined : getChatNickname(character.id),
         chatCurrency: session.isGroup ? undefined : resolveContactCurrency(character.id),
         chatBlacklisted: session.isGroup ? undefined : (session.isBlacklisted || undefined),
+        userReadNoReplyAt,
         musicLocal,
         musicCloud,
         musicOnlineHint,

@@ -110,6 +110,7 @@ export type ChatMessage = {
     role: ChatMessageRole;
     content: string;
     status: ChatMessageStatus;
+    readAt?: string; // 已读时间：用户消息=角色读到的时刻；角色消息=用户看到的时刻
     createdAt: string; // ISO date
     order?: number; // Stable per-session display order
     responseBatchId?: string; // Assistant raw-response batch id
@@ -1256,6 +1257,45 @@ export function loadChatMessages(sessionId: string, limit?: number): ChatMessage
     const all = getSortedSessionMessages(sessionId);
     if (limit && limit < all.length) return all.slice(-limit);
     return all;
+}
+
+/**
+ * 已读回执：把会话里某一方的未读消息批量标记为已读。
+ * - role="user"：角色生成时调用——消息进了 LLM 上下文 = TA 真的读到了；
+ * - role="assistant"：用户打开聊天室看到消息时调用。
+ * 返回被更新的消息（调用方据此同步 React 状态）。
+ */
+export function markSessionMessagesRead(sessionId: string, role: "user" | "assistant"): ChatMessage[] {
+    const now = new Date().toISOString();
+    const changed: ChatMessage[] = [];
+    for (let i = 0; i < _messagesCache.length; i += 1) {
+        const message = _messagesCache[i];
+        if (message.sessionId !== sessionId || message.role !== role || message.status !== "sent") continue;
+        _messagesCache[i] = { ...message, status: "read", readAt: now };
+        changed.push(_messagesCache[i]);
+    }
+    if (changed.length > 0) dbPutMessages(changed);
+    return changed;
+}
+
+/**
+ * 已读不回检测：最后一条角色消息已被用户读过、且此后用户没有新消息时，
+ * 返回用户读到它的时刻（ISO）；否则返回 undefined。仅私聊使用。
+ */
+export function resolveUserReadNoReplyAt(history: ChatMessage[]): string | undefined {
+    const visible = history.filter((m) => !m.mediaData?.hiddenInChat);
+    const lastAssistant = [...visible].reverse().find((m) => m.role === "assistant");
+    if (!lastAssistant || lastAssistant.status !== "read") return undefined;
+    const lastUser = [...visible].reverse().find((m) => m.role === "user");
+    if (lastUser) {
+        const assistantOrder = lastAssistant.order ?? 0;
+        const userOrder = lastUser.order ?? 0;
+        const userIsLater = assistantOrder !== userOrder
+            ? userOrder > assistantOrder
+            : lastUser.createdAt > lastAssistant.createdAt;
+        if (userIsLater) return undefined;
+    }
+    return lastAssistant.readAt || lastAssistant.createdAt;
 }
 
 function createMessageId(): string {

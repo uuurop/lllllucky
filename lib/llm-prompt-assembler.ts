@@ -75,6 +75,7 @@ export interface AssemblerInput {
     chatNickname?: string;                 // 联系人网名：追加在角色卡末尾让 TA 知道自己的昵称（仅聊天场景传入）
     chatCurrency?: CurrencyCode;           // 联系人计价货币：非人民币时告诉 TA 红包/转账按当地货币计价（仅私聊传入）
     chatBlacklisted?: boolean;             // 用户已把 TA 拉黑：让 TA 知道消息被拒收（仅私聊传入）
+    userReadNoReplyAt?: string;            // 已读不回：对方读到 TA 最后一条消息的时刻（ISO，仅私聊传入）
     musicLocal?: string;                   // local music titles for {{musicLocal}} macro
     musicCloud?: string;                   // netease playlist summary for {{musicCloud}} macro
     musicOnlineHint?: string;              // online search hint for {{musicOnlineHint}} macro
@@ -672,6 +673,9 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
                 : "")
             + (input.chatBlacklisted
                 ? "\n对方已把你加入黑名单：你发的每条消息旁边都会出现红色感叹号（对方已拒收），但对方仍能看到你发的内容。"
+                : "")
+            + (input.userReadNoReplyAt
+                ? `\n对方已于${formatChatTimestamp(input.userReadNoReplyAt, input.promptTimestampOptions)}读过你发的消息，但之后一直没有回复你（已读不回）。`
                 : "");
         engine.personality = character.personality ?? "";
         engine.persona = userIdentity?.bio ?? "";

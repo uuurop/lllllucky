@@ -2676,6 +2676,21 @@
   overflow: visible;
 }
 
+/* ── 已读回执：气泡旁的小灰字，贴气泡底部对齐 ── */
+.chat-read-receipt {
+  align-self: flex-end;
+  flex-shrink: 0;
+  padding: 0 2px 3px;
+  font-size: calc(10px * var(--app-text-scale, 1));
+  line-height: 1;
+  color: var(--c-text-light, rgba(0, 0, 0, 0.32));
+  -webkit-user-select: none;
+  user-select: none;
+}
+.chat-read-receipt.is-read {
+  color: var(--c-text-light, rgba(0, 0, 0, 0.45));
+}
+
 /* ── Input textarea ── */
 .chat-input-textarea {
   border: none;

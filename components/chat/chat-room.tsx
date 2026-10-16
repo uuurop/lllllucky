@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, Fragment, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChatSession, ChatMessage, CHAT_APP_SETTINGS_UPDATED_EVENT, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT, CHAT_LOAD_MORE_MESSAGE_COUNT, CHAT_REQUEST_REPLY_EVENT, loadChatAppSettings, loadChatMessages, loadChatContacts, loadChatSessions, saveChatSessions, pushChatMessage, updateChatMessage, deleteChatMessage, deleteChatMessagesFrom, deleteChatMessagesByIds, retractChatMessage, editChatMessage, updateMessageMediaData, replaceResponseBatchWithParts, replaceGroupResponseRound, isReadingDiscussMessage, isSystemInstructionMessage, createResponseBatchId, createResponseRoundId, getLatestStateValues, getLatestCharacterStateValues, compareChatMessages, isSessionStreamingEnabled, resolveChatAvatar, resolveChatDisplayName, resolveContactCurrency, resolveMessageCurrency, CHAT_AVATAR_UPDATED_EVENT } from "@/lib/chat-storage";
+import { ChatSession, ChatMessage, CHAT_APP_SETTINGS_UPDATED_EVENT, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT, CHAT_LOAD_MORE_MESSAGE_COUNT, CHAT_REQUEST_REPLY_EVENT, loadChatAppSettings, loadChatMessages, loadChatContacts, loadChatSessions, saveChatSessions, pushChatMessage, updateChatMessage, deleteChatMessage, deleteChatMessagesFrom, deleteChatMessagesByIds, retractChatMessage, editChatMessage, updateMessageMediaData, replaceResponseBatchWithParts, replaceGroupResponseRound, isReadingDiscussMessage, isSystemInstructionMessage, createResponseBatchId, createResponseRoundId, getLatestStateValues, getLatestCharacterStateValues, compareChatMessages, isSessionStreamingEnabled, resolveChatAvatar, resolveChatDisplayName, resolveContactCurrency, resolveMessageCurrency, markSessionMessagesRead, CHAT_AVATAR_UPDATED_EVENT } from "@/lib/chat-storage";
 import { cnyToForeign, foreignToCny, formatForeignAmount, type CurrencyCode } from "@/lib/exchange-rate";
 import { cleanStreamText, splitStreamPreviewSegments, stripLiteralTexts, stripXmlTagBlocks } from "@/lib/stream-preview";
 import type { StateValue } from "@/lib/chat-storage";
@@ -1348,6 +1348,41 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     useEffect(() => () => { mountedRef.current = false; }, []);
     useEffect(() => { visibleMessagesRef.current = messages; }, [messages]);
     useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
+
+    // ── 已读回执（用户侧）：聊天室真实可见时，把 TA 发来的未读消息标记为已读 ──
+    // 聊天 app 会把访问过的聊天室 display:none 常驻缓存，所以不能用挂载状态判断，
+    // 用 IntersectionObserver 观察滚动容器是否真在视口里。
+    const [roomVisible, setRoomVisible] = useState(false);
+    useEffect(() => {
+        const el = scrollRef.current;
+        if (!el || typeof IntersectionObserver === "undefined") { setRoomVisible(true); return; }
+        const io = new IntersectionObserver((entries) => {
+            setRoomVisible(entries[0]?.isIntersecting ?? false);
+        }, { threshold: 0.02 });
+        io.observe(el);
+        return () => io.disconnect();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const markAssistantReadIfVisible = useCallback(() => {
+        if (!roomVisible || document.visibilityState !== "visible") return;
+        const changed = markSessionMessagesRead(session.id, "assistant");
+        if (changed.length === 0) return;
+        const changedMap = new Map(changed.map(m => [m.id, m]));
+        setMessages(prev => prev.map(m => changedMap.get(m.id) || m));
+    }, [roomVisible, session.id]);
+    useEffect(() => {
+        markAssistantReadIfVisible();
+    }, [markAssistantReadIfVisible, messages]);
+    useEffect(() => {
+        const onVisible = () => markAssistantReadIfVisible();
+        document.addEventListener("visibilitychange", onVisible);
+        window.addEventListener("focus", onVisible);
+        return () => {
+            document.removeEventListener("visibilitychange", onVisible);
+            window.removeEventListener("focus", onVisible);
+        };
+    }, [markAssistantReadIfVisible]);
+
     useChatBottomReserve(
         wrapperRef,
         scrollRef,
@@ -3263,6 +3298,13 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         isGeneratingRef.current = true;
         setIsGenerating(true);
         setGenerationLock(session.id);
+
+        // 已读回执（TA 侧）：本次生成会把用户消息带进上下文 = TA 已读，界面同步翻牌
+        const readMarked = markSessionMessagesRead(session.id, "user");
+        if (readMarked.length > 0) {
+            const readMap = new Map(readMarked.map(m => [m.id, m]));
+            setMessages(prev => prev.map(m => readMap.get(m.id) || m));
+        }
 
         try {
             if (session.isGroup) {
@@ -5984,6 +6026,13 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         && !isEmptyBubble
                         && inBlacklistPeriod
                         && !msg.mediaData?.hiddenInChat;
+                    // 已读回执：自己的消息=TA 是否已读；TA 的消息=自己是否已读（TA 视角可见，已读不回由此判定）
+                    const showReadReceipt = (msg.role === "user" || msg.role === "assistant")
+                        && !isSilentThought
+                        && !isEmptyBubble
+                        && !hiddenEmpty
+                        && !msg.mediaData?.hiddenInChat
+                        && (msg.status === "sent" || msg.status === "read");
                     const selectableStoredId = getSelectableStoredMessageId(msg);
                     const isMultiSelectable = isMultiSelectMode && !!selectableStoredId && !hiddenEmpty;
                     const isMultiSelected = !!selectableStoredId && selectedMessageIds.has(selectableStoredId);
@@ -6223,6 +6272,14 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                                     <circle cx="8" cy="12.2" r="1.15" fill="#fff" />
                                                 </svg>
                                             </div>
+                                        )}
+                                        {showReadReceipt && (
+                                            <span
+                                                className={`chat-read-receipt${msg.status === "read" ? " is-read" : ""}`}
+                                                aria-label={msg.status === "read" ? "已读" : "未读"}
+                                            >
+                                                {msg.status === "read" ? "已读" : "未读"}
+                                            </span>
                                         )}
                                         {msg.role !== "user" && !isSilentThought && !isEmptyBubble && hasFoldedPanel && (
                                             <button
