@@ -3769,6 +3769,12 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         setGenerationLock(session.id);
         streamAccumRef.current = "";
         setStreamPreview(null);
+        // 已读回执（TA 侧）：本次生成会把用户消息带进上下文 = TA 已读，界面同步翻牌
+        const readMarked = markSessionMessagesRead(session.id, "user");
+        if (readMarked.length > 0) {
+            const readMap = new Map(readMarked.map(m => [m.id, m]));
+            setMessages(prev => prev.map(m => readMap.get(m.id) || m));
+        }
         try {
             const latestMessages = loadChatMessages(session.id);
             if (session.isGroup) {
