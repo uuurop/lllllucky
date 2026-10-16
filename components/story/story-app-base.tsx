@@ -61,6 +61,8 @@ import {
   updateStorySession,
 } from "@/lib/story-storage";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
+import { kvGet, kvSet } from "@/lib/kv-db";
+import { emitWeixinSyncToast } from "@/lib/weixin-cloud-sync";
 import { STORY_CSS_EXAMPLE } from "@/lib/css-examples";
 import { applyEditOutputRegex } from "@/lib/llm-prompt-assembler";
 import { MacroEngine } from "@/lib/macro-engine";
@@ -120,6 +122,9 @@ function formatStoryTime(iso: string): string {
 }
 
 const CSS_EXAMPLE = STORY_CSS_EXAMPLE;
+/* 记住上次打开的剧情角色：退出剧情 app 再进来时恢复到这个角色，
+   而不是每次都跳回角色列表第一位 */
+const STORY_LAST_CHARACTER_KEY = "story-last-character-id";
 const STORY_THEMES = [
   { id: "paper", color: "#94a3b8", name: "纸白" },
   { id: "warm", color: "#b89870", name: "手账" },
@@ -335,15 +340,19 @@ export function StoryApp({ onClose }: StoryAppProps) {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (activeSessionIdRef.current) {
-        cancelStoryGenerationRun(activeSessionIdRef.current);
-      }
+      // 退出剧情 app 不再中断生成：后台继续写完，完成后弹全局提示「故事已写入」，
+      // 下次进入会话时消息从存储里正常读出来
     };
   }, []);
 
   useEffect(() => {
     hydrateStoryStorage().then(() => {
-      const initialChar = loadCharacters()[0]?.id || "";
+      const allCharacters = loadCharacters();
+      const savedCharacterId = kvGet(STORY_LAST_CHARACTER_KEY);
+      const initialChar =
+        (savedCharacterId && allCharacters.some((character) => character.id === savedCharacterId)
+          ? savedCharacterId
+          : "") || allCharacters[0]?.id || "";
       if (initialChar) {
         const session = createOrGetStorySession(initialChar);
         setActiveCharacterId(initialChar);
@@ -625,7 +634,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
     markGenerating(sessionId, true);
     const generationRun = createStoryGenerationRun(sessionId);
     const generationRunId = generationRun.runId;
-    const isCurrentGeneration = () => mountedRef.current && isStoryGenerationRunActive(sessionId, generationRunId);
+    // 不以组件挂载为前提：退出剧情 app 后生成仍在后台继续，结果照常写入存储
+    const isCurrentGeneration = () => isStoryGenerationRunActive(sessionId, generationRunId);
 
     try {
       const historyForGeneration = loadStoryMessages(sessionId);
@@ -644,10 +654,14 @@ export function StoryApp({ onClose }: StoryAppProps) {
         regexSignature: result.regexSignature,
         parserVersion: result.parserVersion,
       });
-      if (activeSessionIdRef.current === sessionId) {
+      const isViewing = mountedRef.current && activeSessionIdRef.current === sessionId;
+      if (isViewing) {
         setMessages(loadStoryMessages(sessionId)); // 按会话从存储重读，杜绝跨会话串消息
+        setStorageVersion((value) => value + 1);
+      } else {
+        // 用户已离开剧情 app（或切到别的会话）：写入完成，顶上弹提示
+        emitWeixinSyncToast("故事已写入", { id: "story-generation", duration: 2600 });
       }
-      setStorageVersion((value) => value + 1);
 
       const storyCharacter = characters.find((character) => character.id === characterId);
       if (storyCharacter) {
@@ -670,10 +684,13 @@ export function StoryApp({ onClose }: StoryAppProps) {
         rawContent: errText,
         renderedContent: errText,
       });
-      if (activeSessionIdRef.current === sessionId) {
+      const isViewingOnError = mountedRef.current && activeSessionIdRef.current === sessionId;
+      if (isViewingOnError) {
         setMessages(loadStoryMessages(sessionId));
+        setStorageVersion((value) => value + 1);
+      } else {
+        emitWeixinSyncToast("剧情生成失败，请稍后再试", { id: "story-generation", duration: 3200 });
       }
-      setStorageVersion((value) => value + 1);
     } finally {
       if (finishStoryGenerationRun(sessionId, generationRunId)) {
         markGenerating(sessionId, false);
@@ -834,7 +851,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
     markGenerating(sessionId, true);
     const generationRun = createStoryGenerationRun(sessionId);
     const generationRunId = generationRun.runId;
-    const isCurrentGeneration = () => mountedRef.current && isStoryGenerationRunActive(sessionId, generationRunId);
+    const isCurrentGeneration = () => isStoryGenerationRunActive(sessionId, generationRunId);
     try {
       const result = await generateStoryCompletion(characterId, contextMessages, {
         sessionFoldTags: currentSession?.foldTags,
@@ -847,14 +864,24 @@ export function StoryApp({ onClose }: StoryAppProps) {
         rawContent: result.rawText, renderedContent: result.renderedText,
         storySummary: result.storySummary, regexSignature: result.regexSignature, parserVersion: result.parserVersion,
       });
-      if (activeSessionIdRef.current === sessionId) setMessages(loadStoryMessages(sessionId));
-      setStorageVersion(v => v + 1);
+      const isViewing = mountedRef.current && activeSessionIdRef.current === sessionId;
+      if (isViewing) {
+        setMessages(loadStoryMessages(sessionId));
+        setStorageVersion(v => v + 1);
+      } else {
+        emitWeixinSyncToast("故事已写入", { id: "story-generation", duration: 2600 });
+      }
     } catch (error) {
       if (!isCurrentGeneration() || isAbortLikeError(error)) return;
       const errText = error instanceof Error ? error.message : "重试失败，请稍后再试。";
       const systemMessage = pushStoryMessage({ sessionId, role: "system", rawContent: errText, renderedContent: errText });
-      if (activeSessionIdRef.current === sessionId) setMessages(loadStoryMessages(sessionId));
-      setStorageVersion(v => v + 1);
+      const isViewingOnError = mountedRef.current && activeSessionIdRef.current === sessionId;
+      if (isViewingOnError) {
+        setMessages(loadStoryMessages(sessionId));
+        setStorageVersion(v => v + 1);
+      } else {
+        emitWeixinSyncToast("剧情生成失败，请稍后再试", { id: "story-generation", duration: 3200 });
+      }
     } finally {
       if (finishStoryGenerationRun(sessionId, generationRunId)) {
         markGenerating(sessionId, false);
@@ -935,6 +962,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
                 data-active={character.id === activeCharacterId ? "true" : undefined}
                 onClick={() => {
                   setActiveCharacterId(character.id);
+                  kvSet(STORY_LAST_CHARACTER_KEY, character.id);
                   setDrawerOpen(false);
                 }}
               >
