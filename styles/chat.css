@@ -2676,16 +2676,20 @@
   overflow: visible;
 }
 
-/* ── 已读回执：气泡旁的小灰字，贴气泡底部对齐 ── */
+/* ── 已读回执：气泡正下方的小灰字，自己的贴气泡左缘、TA 的贴气泡右缘 ── */
 .chat-read-receipt {
-  align-self: flex-end;
+  align-self: flex-start;
   flex-shrink: 0;
-  padding: 0 2px 3px;
+  margin-top: 3px;
+  padding: 0 2px;
   font-size: calc(10px * var(--app-text-scale, 1));
   line-height: 1;
   color: var(--c-text-light, rgba(0, 0, 0, 0.32));
   -webkit-user-select: none;
   user-select: none;
+}
+.chat-read-receipt[data-side="assistant"] {
+  align-self: flex-end;
 }
 .chat-read-receipt.is-read {
   color: var(--c-text-light, rgba(0, 0, 0, 0.45));

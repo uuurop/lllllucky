@@ -6258,6 +6258,16 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                                 onActionSelect={(text) => chatTextInputRef.current?.appendText(text)}
                                                 defaultTranslationExpanded={session.collapseBilingualTranslation !== false ? false : true}
                                             />
+                                            {/* 已读回执：贴在气泡正下方，自己的靠左、TA 的靠右 */}
+                                            {showReadReceipt && (
+                                                <span
+                                                    className={`chat-read-receipt${msg.status === "read" ? " is-read" : ""}`}
+                                                    data-side={msg.role === "user" ? "user" : "assistant"}
+                                                    aria-label={msg.status === "read" ? "已读" : "未读"}
+                                                >
+                                                    {msg.status === "read" ? "已读" : "未读"}
+                                                </span>
+                                            )}
                                         </div>
                                         </div>}
                                         {showBlockedBadge && (
@@ -6272,14 +6282,6 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                                     <circle cx="8" cy="12.2" r="1.15" fill="#fff" />
                                                 </svg>
                                             </div>
-                                        )}
-                                        {showReadReceipt && (
-                                            <span
-                                                className={`chat-read-receipt${msg.status === "read" ? " is-read" : ""}`}
-                                                aria-label={msg.status === "read" ? "已读" : "未读"}
-                                            >
-                                                {msg.status === "read" ? "已读" : "未读"}
-                                            </span>
                                         )}
                                         {msg.role !== "user" && !isSilentThought && !isEmptyBubble && hasFoldedPanel && (
                                             <button
