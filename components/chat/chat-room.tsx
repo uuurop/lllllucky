@@ -6213,6 +6213,16 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                             {session.isGroup && msg.role !== "user" && (
                                                 <span className="chat-group-sender-name">{msg.senderName || ""}{renderGroupRoleBadge(msg.senderCharacterId)}</span>
                                             )}
+                                            {/* 气泡 + 已读回执同行排列：回执贴在气泡外侧底部，不占气泡内部空间 */}
+                                            <div className="chat-bubble-receipt-row" data-side={msg.role === "user" ? "user" : "assistant"}>
+                                            {showReadReceipt && !isStandaloneHtmlPreview && msg.role === "user" && (
+                                                <span
+                                                    className={`chat-read-receipt${msg.status === "read" ? " is-read" : ""}`}
+                                                    aria-label={msg.status === "read" ? "已读" : "未读"}
+                                                >
+                                                    {msg.status === "read" ? "已读" : "未读"}
+                                                </span>
+                                            )}
                                             <div
                                             {...(editingMessageId !== msg.id ? {
                                                 onPointerDown: (e: React.PointerEvent) => { e.stopPropagation(); handleMessagePointerDown(e, msg.id); },
@@ -6258,16 +6268,15 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                                 onActionSelect={(text) => chatTextInputRef.current?.appendText(text)}
                                                 defaultTranslationExpanded={session.collapseBilingualTranslation !== false ? false : true}
                                             />
-                                            {/* 已读回执：贴在气泡正下方，自己的靠左、TA 的靠右 */}
-                                            {showReadReceipt && (
-                                                <span
-                                                    className={`chat-read-receipt${msg.status === "read" ? " is-read" : ""}`}
-                                                    data-side={msg.role === "user" ? "user" : "assistant"}
-                                                    aria-label={msg.status === "read" ? "已读" : "未读"}
-                                                >
-                                                    {msg.status === "read" ? "已读" : "未读"}
-                                                </span>
-                                            )}
+                                        </div>
+                                        {showReadReceipt && !isStandaloneHtmlPreview && msg.role !== "user" && (
+                                            <span
+                                                className={`chat-read-receipt${msg.status === "read" ? " is-read" : ""}`}
+                                                aria-label={msg.status === "read" ? "已读" : "未读"}
+                                            >
+                                                {msg.status === "read" ? "已读" : "未读"}
+                                            </span>
+                                        )}
                                         </div>
                                         </div>}
                                         {showBlockedBadge && (
