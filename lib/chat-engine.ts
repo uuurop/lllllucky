@@ -569,12 +569,17 @@ async function applyChatPluginLlmRequest<T extends { role: string }>(
     messages: T[],
     purpose: string,
     sessionId?: string,
+    characterId?: string,
+    extra?: { appTags?: string[]; preview?: boolean },
 ): Promise<{ messages: T[]; preset: PresetConfig | null }> {
     if (typeof window === "undefined") return { messages, preset };
     const payload = await runChatPluginTransform("llm.request", {
         messages: messages as unknown as LlmRequestPayload["messages"],
         purpose,
         sessionId,
+        characterId,
+        appTags: extra?.appTags,
+        preview: extra?.preview,
     });
     let nextPreset = preset;
     if (preset && (payload.temperature !== undefined || payload.maxTokens !== undefined)) {
@@ -586,6 +591,19 @@ async function applyChatPluginLlmRequest<T extends { role: string }>(
         ? payload.messages as unknown as T[]
         : messages;
     return { messages: nextMessages, preset: nextPreset };
+}
+
+/**
+ * 提示词查看器用：和真正发请求时一样跑一遍 llm.request（日历、经期等都是这时才加进去的），
+ * 但标成预览，各 hook 只往提示词里加内容、不记账不排队
+ */
+export function applyLlmRequestHooksForPreview<T extends { role: string }>(
+    preset: PresetConfig | null,
+    messages: T[],
+    purpose: string,
+    target: { sessionId?: string; characterId?: string; appTags?: string[] },
+): Promise<{ messages: T[]; preset: PresetConfig | null }> {
+    return applyChatPluginLlmRequest(preset, messages, purpose, target.sessionId, target.characterId, { appTags: target.appTags, preview: true });
 }
 
 /** 聊天插件 llm.response 织入：模型原始回复在内置正则处理前交给插件改写 */
@@ -801,12 +819,14 @@ export async function sendLLMStreamRequest(
         appTags?: string[];
         followUpCount?: number;
         debugSessionId?: string;
+        /** 替哪个角色生成（宿主知道时填）：插件 hook 据此判断权限，比如日历谁能看 */
+        characterId?: string;
         signal?: AbortSignal;
     },
     callbacks?: ChatCompletionStreamCallbacks,
 ): Promise<ChatCompletionStreamResult> {
     const pluginPurpose = options?.appId ?? "chat";
-    const afterPlugins = await applyChatPluginLlmRequest(preset, messages, pluginPurpose, options?.debugSessionId);
+    const afterPlugins = await applyChatPluginLlmRequest(preset, messages, pluginPurpose, options?.debugSessionId, options?.characterId, { appTags: options?.appTags });
     const effectivePreset = afterPlugins.preset;
     const originalOnDelta = callbacks?.onDelta;
     const pluginCallbacks: ChatCompletionStreamCallbacks | undefined = callbacks ? {
@@ -886,6 +906,49 @@ export async function sendLLMStreamRequest(
 }
 
 /**
+ * 和 sendLLMRequest 同签名、同返回（一次拿到全文），但传输优先走流式。
+ * iOS Safari 对迟迟收不到任何响应数据的请求约 60 秒就判超时，非流式的长生成（剧情等）在 iPhone 上会必挂；
+ * 流式一开始就陆续有数据，不会被判空闲。界面不变，仍是收齐后整段显示。
+ * 什么都没收到就失败（接口或中转不支持 SSE 等）时退回 sendLLMRequest 重试一次；
+ * 已经收到正文或思考内容后再断开，或调用方主动中止，按原样抛出（避免同一次长生成计费两次）。
+ */
+export async function sendLLMRequestPreferStream(
+    config: ApiConfig,
+    preset: PresetConfig | null,
+    messages: LLMMessage[],
+    regexes: RegexConfig[],
+    meta?: { characterName?: string; userName?: string },
+    options?: Parameters<typeof sendLLMRequest>[5],
+): Promise<string> {
+    let received = false;
+    let reasoning = "";
+    try {
+        const result = await sendLLMStreamRequest(config, preset, messages, regexes, meta, {
+            skipOutputRegex: options?.skipOutputRegex,
+            includeReasoning: options?.includeReasoning,
+            appId: options?.appId,
+            appTags: options?.appTags,
+            followUpCount: options?.followUpCount,
+            debugSessionId: options?.debugSessionId,
+            // 插件 hook 靠它判断替谁生成（剧情的日历 / 经期注入就看这个），流式这条路也得带上
+            characterId: options?.characterId,
+            signal: options?.signal,
+        }, {
+            onDelta: () => { received = true; },
+            onReasoningDelta: (text: string) => { received = true; reasoning += text; },
+        });
+        if (reasoning) {
+            try { options?.onReasoning?.(reasoning); } catch { /* 捕获回调异常，不影响主流程 */ }
+        }
+        return result.content;
+    } catch (error) {
+        if (received || options?.signal?.aborted) throw error;
+        console.warn("[ChatEngine] 流式请求没有收到内容，退回非流式重试：", error);
+        return sendLLMRequest(config, preset, messages, regexes, meta, options);
+    }
+}
+
+/**
  * Shared LLM HTTP request: provider normalization → consecutive same-role merge → API call → log → output regex.
  * Used by both generateChatCompletion (1:1 chat) and generateGroupChatCompletion (group chat).
  */
@@ -904,11 +967,13 @@ export async function sendLLMRequest(
         appTags?: string[];
         followUpCount?: number;
         debugSessionId?: string;
+        /** 替哪个角色生成（宿主知道时填）：插件 hook 据此判断权限，比如日历谁能看 */
+        characterId?: string;
         signal?: AbortSignal;
     },
 ): Promise<string> {
     const pluginPurpose = options?.appId ?? "chat";
-    const afterPlugins = await applyChatPluginLlmRequest(preset, messages, pluginPurpose, options?.debugSessionId);
+    const afterPlugins = await applyChatPluginLlmRequest(preset, messages, pluginPurpose, options?.debugSessionId, options?.characterId, { appTags: options?.appTags });
     const effectivePreset = afterPlugins.preset;
     const requestMessages = toLlmRequestMessages(afterPlugins.messages);
     const request = buildProviderRequest(config, effectivePreset, requestMessages);

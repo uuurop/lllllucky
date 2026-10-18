@@ -4,6 +4,10 @@ export type SettingItemMeta = {
     description?: string;
     createdAt: number;
     updatedAt: number;
+    /** 所属文件夹 id（世界书等在设置页可分组收纳）；空为「未分类」 */
+    folderId?: string;
+    /** 置顶：在设置列表和各选择框里排在最前 */
+    pinned?: boolean;
 };
 
 // --- WorldBook ---
@@ -155,6 +159,8 @@ export type ApiConfig = {
     preventEmptyGenerateRambling?: boolean;
     /** 所属文件夹 id（见 lib/api-folder-storage.ts）；空为「未分类」。 */
     folderId?: string;
+    /** 置顶：在设置列表和各选择框里排在最前 */
+    pinned?: boolean;
 };
 
 /** API 配置文件夹（分类收纳用）。 */
