@@ -1096,6 +1096,792 @@ const OfflineTextInputBar = memo(forwardRef<OfflineTextInputHandle, {
     );
 }));
 
+// ── 消息列表（memo 隔离）────────────────────────────────────
+// 通过 ctxRef 读取最新闭包，仅在 version 变化时重绘；
+// 面板/弹窗/输入框等无关状态变化时整个列表跳过重绘，解决点按钮、长按卡顿。
+const ChatMessageList = memo(function ChatMessageList({ ctxRef }: { ctxRef: { current: Record<string, any> }; version: unknown }) {
+    const {
+        session, activeMessageId, activeOfflineTarget, character,
+        chatTextInputRef, deleteWeixinCloudBeforeLocal, editingMessageId, expandedMonologueId,
+        expandedVoiceCallIds, formatSysMsgForUI, getMessageDisplayContent, getOfflineDisplayText,
+        getSelectableStoredMessageId, getStoredActionMessageId, groupCharMap, handleApproveMemoryWrite,
+        handleDeleteMessage, handleIgnoreMemoryWrite, handleMessagePointerCancel, handleMessagePointerDown,
+        handleMessagePointerUp, handleMusicCardPlay, handleOfflinePointerDown, hasMore,
+        hasMoreOfflineTurns, highlightMessageId, isMultiSelectMode, isOfflineGenerating,
+        loadMore, loadMoreOfflineTurns, messages, offlineDisplayByTurnId,
+        offlineMode, offlineStreamPreview, offlineTurns, openMessageContextMenu,
+        openOfflineContextMenu, pendingOfflineUserText, projectedMessages, renderBubbleContextMenu,
+        renderDeleteOnlyContextMenu, renderDisplayText, renderGroupRoleBadge, renderOfflineContextMenu,
+        renderSystemContextMenu, selectedMessageIds, sendRichMessage, setExpandedThinkingId,
+        setExpandedVoiceCallIds, setMediaDetailMsg, setMessages, setReasoningSheetText,
+        startMultiSelectFromMessage, startPosRef, statusRegionCfg, streamPreview,
+        toggleMultiSelectedMessage, userIdentity, visibleOfflineTurns,
+        voiceCallGroups, voiceTextIds
+    } = ctxRef.current;
+    return (
+        <>
+                {offlineMode && (
+                    <div className="chat-offline-body">
+                        {offlineTurns.length === 0 && !pendingOfflineUserText ? (
+                            <div className="chat-offline-empty">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0Z" /><circle cx="12" cy="10" r="3" /></svg>
+                                线下模式
+                            </div>
+                        ) : null}
+                        {hasMoreOfflineTurns && (
+                            <button
+                                type="button"
+                                className="chat-sys-msg chat-load-more-button"
+                                onClick={loadMoreOfflineTurns}
+                            >
+                                <span>查看更多线下记录</span>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="18 15 12 9 6 15" />
+                                </svg>
+                            </button>
+                        )}
+                        {visibleOfflineTurns.map((turn: any, turnIdx: number) => {
+                            const offlineDisplay = offlineDisplayByTurnId.get(turn.id) ?? getOfflineDisplayText(turn);
+                            const assistantHasHtmlPreview = hasOfflineHtmlPreview(offlineDisplay.assistantContent);
+                            const prevTime = turnIdx > 0 ? visibleOfflineTurns[turnIdx - 1].createdAt : null;
+                            const showTime = !prevTime || shouldShowTimestamp(turn.createdAt, prevTime);
+                            return (
+                            <Fragment key={turn.id}>
+                            {showTime && <div className="chat-offline-time">{formatChatUiTime(turn.createdAt)}</div>}
+                            <div className="chat-offline-turn">
+                                <div className="chat-offline-entry" data-role="user" style={offlineDisplay.userContent.trim() ? undefined : { display: "none" }}>
+                                    {/* 头像占位：默认 display:none（见 chat.css），供自定义 CSS 显示 */}
+                                    <div className="chat-offline-avatar" aria-hidden="true">
+                                        {userIdentity?.avatarUrl ? <img src={userIdentity.avatarUrl} alt="" /> : <User size={18} color="var(--c-text)" />}
+                                    </div>
+                                    <div className="chat-offline-label">你</div>
+                                    <div
+                                        className="chat-offline-text"
+                                        onPointerDown={(e) => { e.stopPropagation(); handleOfflinePointerDown(e, { turnId: turn.id, role: "user" }); }}
+                                        onPointerUp={(e) => handleMessagePointerUp(e)}
+                                        onPointerCancel={handleMessagePointerCancel}
+                                        onPointerLeave={handleMessagePointerCancel}
+                                        onPointerMove={(e) => {
+                                            if (startPosRef.current) {
+                                                const dx = Math.abs(e.clientX - startPosRef.current.x);
+                                                const dy = Math.abs(e.clientY - startPosRef.current.y);
+                                                if (dx > 10 || dy > 10) handleMessagePointerCancel();
+                                            }
+                                        }}
+                                        onContextMenu={(e) => { e.preventDefault(); openOfflineContextMenu({ turnId: turn.id, role: "user" }, { x: e.clientX, y: e.clientY }); }}
+                                        {...(activeOfflineTarget?.turnId === turn.id && activeOfflineTarget.role === "user" ? { "data-active": "" } : {})}
+                                    >
+                                        {activeOfflineTarget?.turnId === turn.id && activeOfflineTarget.role === "user" && renderOfflineContextMenu(turn, "user")}
+                                        <BilingualTextBlock
+                                            text={offlineDisplay.userContent}
+                                            mode="markdown"
+                                            defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                                        />
+                                    </div>
+                                </div>
+                                <div className="chat-offline-entry" data-role="assistant">
+                                    {/* 头像占位：默认 display:none（见 chat.css），供自定义 CSS 显示 */}
+                                    <div className="chat-offline-avatar" aria-hidden="true">
+                                        {chatAvatarImg(character?.id)}
+                                    </div>
+                                    <div className="chat-offline-label-row">
+                                        <div className="chat-offline-label">{session.isGroup ? (session.groupName || "群聊") : (character?.name || "对方")}</div>
+                                        {assistantHasHtmlPreview ? (
+                                            <button
+                                                type="button"
+                                                className="chat-offline-menu-trigger"
+                                                aria-label="线下回复操作"
+                                                title="线下回复操作"
+                                                onPointerDown={(e) => {
+                                                    e.stopPropagation();
+                                                    handleMessagePointerCancel();
+                                                }}
+                                                onClick={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                    const rect = e.currentTarget.getBoundingClientRect();
+                                                    openOfflineContextMenu({ turnId: turn.id, role: "assistant" }, {
+                                                        x: rect.left + rect.width / 2,
+                                                        y: rect.bottom,
+                                                    });
+                                                }}
+                                            >
+                                                <MoreHorizontal size={16} strokeWidth={2} />
+                                            </button>
+                                        ) : null}
+                                    </div>
+                                    {/* 思维链触发条（线下模式，Claude app 风格）：优先展示预设格式 <thinking> 解析结果，缺省回退模型 API 原生思考 */}
+                                    {(turn.thinkingText || turn.reasoningText) && (
+                                        <button
+                                            type="button"
+                                            className="chat-reasoning-trigger"
+                                            onClick={(e) => { e.stopPropagation(); setReasoningSheetText(turn.thinkingText || turn.reasoningText || null); }}
+                                            aria-label="查看思考过程"
+                                        >
+                                            <Clock size={13} strokeWidth={1.8} className="chat-reasoning-trigger-icon" />
+                                            <span className="chat-reasoning-trigger-text">{reasoningPreviewLine(turn.thinkingText || turn.reasoningText || "")}</span>
+                                            <ChevronRight size={14} strokeWidth={1.8} className="chat-reasoning-trigger-icon" />
+                                        </button>
+                                    )}
+                                    <div
+                                        className="chat-offline-text"
+                                        onPointerDown={(e) => { e.stopPropagation(); handleOfflinePointerDown(e, { turnId: turn.id, role: "assistant" }); }}
+                                        onPointerUp={(e) => handleMessagePointerUp(e)}
+                                        onPointerCancel={handleMessagePointerCancel}
+                                        onPointerLeave={handleMessagePointerCancel}
+                                        onPointerMove={(e) => {
+                                            if (startPosRef.current) {
+                                                const dx = Math.abs(e.clientX - startPosRef.current.x);
+                                                const dy = Math.abs(e.clientY - startPosRef.current.y);
+                                                if (dx > 10 || dy > 10) handleMessagePointerCancel();
+                                            }
+                                        }}
+                                        onContextMenu={(e) => { e.preventDefault(); openOfflineContextMenu({ turnId: turn.id, role: "assistant" }, { x: e.clientX, y: e.clientY }); }}
+                                        {...(activeOfflineTarget?.turnId === turn.id && activeOfflineTarget.role === "assistant" ? { "data-active": "" } : {})}
+                                    >
+                                        {activeOfflineTarget?.turnId === turn.id && activeOfflineTarget.role === "assistant" && renderOfflineContextMenu(turn, "assistant")}
+                                        <OfflineAssistantTextBlock
+                                            text={offlineDisplay.assistantContent}
+                                            defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                                        />
+                                    </div>
+                                    {turn.summary.trim() && (
+                                        <details className="chat-offline-summary-fold">
+                                            <summary>摘要（{turn.summaryTag || "summary"}）</summary>
+                                            <div className="chat-offline-summary-content">
+                                                <BilingualTextBlock
+                                                    text={offlineDisplay.summary}
+                                                    mode="markdown"
+                                                    defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                                                />
+                                            </div>
+                                        </details>
+                                    )}
+                                </div>
+                            </div>
+                            </Fragment>
+                            );
+                        })}
+                        {(pendingOfflineUserText || isOfflineGenerating) && (
+                            <div className="chat-offline-turn">
+                                <div className="chat-offline-entry" data-role="user" style={pendingOfflineUserText ? undefined : { display: "none" }}>
+                                    {/* 头像占位：默认 display:none（见 chat.css），供自定义 CSS 显示 */}
+                                    <div className="chat-offline-avatar" aria-hidden="true">
+                                        {userIdentity?.avatarUrl ? <img src={userIdentity.avatarUrl} alt="" /> : <User size={18} color="var(--c-text)" />}
+                                    </div>
+                                    <div className="chat-offline-label">你</div>
+                                    <div className="chat-offline-text">
+                                        <BilingualTextBlock
+                                            text={renderDisplayText(pendingOfflineUserText, 1, true)}
+                                            mode="markdown"
+                                            defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                                        />
+                                    </div>
+                                </div>
+                                {offlineStreamPreview?.content ? (
+                                    /* 流式预览原地长出：与正式剧情正文同结构（头像/角色名/正文区），
+                                       正文用轻量 pre-wrap 渲染（避免每帧 markdown/双语解析），落库时原地换成正式排版 */
+                                    <div className="chat-offline-entry" data-role="assistant">
+                                        <div className="chat-offline-avatar" aria-hidden="true">
+                                            {chatAvatarImg(character?.id)}
+                                        </div>
+                                        <div className="chat-offline-label-row">
+                                            <div className="chat-offline-label">{session.isGroup ? (session.groupName || "群聊") : (character?.name || "对方")}</div>
+                                        </div>
+                                        <div className="chat-offline-text">
+                                            <div className="chat-stream-text whitespace-pre-wrap break-words">{offlineStreamPreview.content}</div>
+                                            <span className="chat-stream-cursor" aria-hidden="true" />
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="chat-offline-generating">
+                                        <span>线下回复生成中</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+                {!offlineMode && hasMore && (
+                    <button
+                        type="button"
+                        className="chat-sys-msg chat-load-more-button"
+                        onClick={loadMore}
+                    >
+                        <span>查看更多消息</span>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="18 15 12 9 6 15" />
+                        </svg>
+                    </button>
+                )}
+                {!offlineMode && projectedMessages.map((msg: any, idx: number) => {
+                    // ── Voice call group: collapsed widget ──
+                    const vcGroup = voiceCallGroups.groups.find((g: any) => g.startIdx === idx);
+                    if (vcGroup) {
+                        const isExpanded = expandedVoiceCallIds.has(vcGroup.startId);
+                        const groupMessages = projectedMessages.slice(vcGroup.startIdx, vcGroup.endIdx + 1);
+                        const chatCount = groupMessages.filter((m: any) => uiRole(m) !== "system").length;
+                        return (
+                            <div key={`vc-${vcGroup.startId}`} className="flex flex-col gap-2">
+                                <div
+                                    onPointerDown={(e) => { e.stopPropagation(); handleMessagePointerDown(e, `vc-${vcGroup.startId}`); }}
+                                    onPointerUp={(e) => handleMessagePointerUp(e)}
+                                    onPointerCancel={handleMessagePointerCancel}
+                                    onPointerLeave={handleMessagePointerCancel}
+                                    onPointerMove={(e) => {
+                                        if (startPosRef.current) {
+                                            const dx = Math.abs(e.clientX - startPosRef.current.x);
+                                            const dy = Math.abs(e.clientY - startPosRef.current.y);
+                                            if (dx > 10 || dy > 10) handleMessagePointerCancel();
+                                        }
+                                    }}
+                                    onContextMenu={(e) => { e.preventDefault(); openMessageContextMenu(`vc-${vcGroup.startId}`, { x: e.clientX, y: e.clientY }); }}
+                                    onClick={() => {
+                                        if (activeMessageId === `vc-${vcGroup.startId}`) return;
+                                        setExpandedVoiceCallIds((prev: any) => {
+                                            const next = new Set(prev);
+                                            if (next.has(vcGroup.startId)) next.delete(vcGroup.startId);
+                                            else next.add(vcGroup.startId);
+                                            return next;
+                                        });
+                                    }}
+                                    className="chat-sys-msg flex items-center justify-center gap-[6px] py-[6px] px-[14px] mx-auto rounded-2xl cursor-pointer relative"
+                                    {...(activeMessageId === `vc-${vcGroup.startId}` ? { "data-active": "" } : {})}
+                                >
+                                    {vcGroup.callType === "video" ? (
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M23 7l-7 5 7 5V7z" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+                                        </svg>
+                                    ) : (
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
+                                        </svg>
+                                    )}
+                                    <span>{vcGroup.callType === "video" ? "视频通话" : "语音通话"}{vcGroup.duration ? ` ${vcGroup.duration}` : ""}{chatCount > 0 ? ` · ${chatCount}条消息` : ""}</span>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                                        className="ui-chevron-down-flip" {...(isExpanded ? { "data-open": "" } : {})}>
+                                        <polyline points="6 9 12 15 18 9" />
+                                    </svg>
+                                    {activeMessageId === `vc-${vcGroup.startId}` && renderDeleteOnlyContextMenu(() => {
+                                        const groupMsgIds = groupMessages.map((m: any) => m.id);
+                                        void deleteWeixinCloudBeforeLocal(groupMessages, () => {
+                                            groupMsgIds.forEach((id: any) => deleteChatMessage(id));
+                                            setMessages((prev: any) => prev.filter((m: any) => !groupMsgIds.includes(m.id)));
+                                        });
+                                    })}
+                                </div>
+                                {isExpanded && (
+                                    <div className="chat-vc-group-border">
+                                        {groupMessages.map((gMsg: any) => (
+                                            uiRole(gMsg) === "system" ? (
+                                                <div key={gMsg.id} className="flex justify-center">
+                                                    <div
+                                                        onPointerDown={(e) => { e.stopPropagation(); handleMessagePointerDown(e, gMsg.id); }}
+                                                        onPointerUp={(e) => handleMessagePointerUp(e)}
+                                                        onPointerCancel={handleMessagePointerCancel}
+                                                        onPointerLeave={handleMessagePointerCancel}
+                                                        onPointerMove={(e) => {
+                                                            if (startPosRef.current) {
+                                                                const dx = Math.abs(e.clientX - startPosRef.current.x);
+                                                                const dy = Math.abs(e.clientY - startPosRef.current.y);
+                                                                if (dx > 10 || dy > 10) handleMessagePointerCancel();
+                                                            }
+                                                        }}
+                                                        onContextMenu={(e) => { e.preventDefault(); openMessageContextMenu(gMsg.id, { x: e.clientX, y: e.clientY }); }}
+                                                        className="chat-sys-msg relative cursor-pointer"
+                                                        {...(activeMessageId === gMsg.id ? { "data-active": "" } : {})}
+                                                    >
+                                                        {formatSysMsgForUI(gMsg.content, gMsg)}
+                                                        {activeMessageId === gMsg.id && renderDeleteOnlyContextMenu(() => handleDeleteMessage(getStoredActionMessageId(gMsg)))}
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div key={gMsg.id} className={`flex ${gMsg.role === "user" ? "justify-end" : "justify-start"}`}>
+                                                    <div className="flex flex-col min-w-0 max-w-[75%]">
+                                                        {session.isGroup && gMsg.role !== "user" && (
+                                                            <span className="chat-group-sender-name">{gMsg.senderName || ""}{renderGroupRoleBadge(gMsg.senderCharacterId)}</span>
+                                                        )}
+                                                        <div
+                                                            onPointerDown={(e) => { e.stopPropagation(); handleMessagePointerDown(e, gMsg.id); }}
+                                                            onPointerUp={(e) => handleMessagePointerUp(e)}
+                                                            onPointerCancel={handleMessagePointerCancel}
+                                                            onPointerLeave={handleMessagePointerCancel}
+                                                            onPointerMove={(e) => {
+                                                                if (startPosRef.current) {
+                                                                    const dx = Math.abs(e.clientX - startPosRef.current.x);
+                                                                    const dy = Math.abs(e.clientY - startPosRef.current.y);
+                                                                    if (dx > 10 || dy > 10) handleMessagePointerCancel();
+                                                                }
+                                                            }}
+                                                            onContextMenu={(e) => { e.preventDefault(); openMessageContextMenu(gMsg.id, { x: e.clientX, y: e.clientY }); }}
+                                                            className={`chat-bubble-role-${gMsg.role} py-2 px-3 rounded-md break-words relative cursor-pointer`}
+                                                            {...(activeMessageId === gMsg.id ? { "data-active": "" } : {})}
+                                                        >
+                                                            <BilingualTextBlock
+                                                                text={gMsg.displayProjected ? gMsg.content : renderDisplayText(gMsg.content, gMsg.role === "user" ? 1 : 2, false)}
+                                                                mode="markdown"
+                                                                defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                                                            />
+                                                            {activeMessageId === gMsg.id && renderBubbleContextMenu(gMsg, { allowMultiSelect: false })}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    }
+
+                    // Skip messages that belong to a voice call group (rendered above)
+                    if (voiceCallGroups.memberSet.has(idx)) return null;
+
+                    const renderMsg = msg;
+                    const isSystemInstruction = isSystemInstructionMessage(renderMsg);
+                    const bubbleDisplayContent = getMessageDisplayContent(renderMsg);
+                    let prevVisibleMsg: RenderChatMessage | null = null;
+                    for (let prevIdx = idx - 1; prevIdx >= 0; prevIdx -= 1) {
+                        if (voiceCallGroups.memberSet.has(prevIdx)) continue;
+                        const candidate = projectedMessages[prevIdx];
+                        const candidateDisplayContent = getMessageDisplayContent(candidate);
+                        if (isHiddenChatFlowMessage(candidate, candidateDisplayContent)) continue;
+                        prevVisibleMsg = candidate;
+                        break;
+                    }
+                    const showTime = shouldShowTimestamp(msg.createdAt, prevVisibleMsg?.createdAt ?? null);
+                    const isConsecutive = prevVisibleMsg && !showTime && uiRole(prevVisibleMsg) === uiRole(msg) && uiRole(msg) !== "system"
+                        && (!session.isGroup || prevVisibleMsg.senderCharacterId === msg.senderCharacterId);
+                    // Hide bubbles with no visible content (empty text, stripped music tags, etc.)
+                    const visibleContent = getChatFlowVisibleContent(renderMsg, bubbleDisplayContent);
+                    const isVisualMedia = isChatVisualMedia(renderMsg);
+                    const hiddenEmpty = isHiddenChatFlowMessage(renderMsg, bubbleDisplayContent);
+                    const hasFoldedPanel = !!(renderMsg.statusPanel || renderMsg.innerMonologue);
+                    // 内心卡片只展示本轮实际输出的状态值；旧数据没有 freshStateValues 时回退到合并快照
+                    const cardStateValues = msg.freshStateValues ?? msg.stateValues;
+                    const isSilentThought = !visibleContent && !renderMsg.mediaType && hasFoldedPanel && msg.role !== "user";
+                    const isStandaloneHtmlPreview = !renderMsg.mediaType && isStandaloneHtmlPreviewContent(bubbleDisplayContent);
+                    const isMediaBubble = (renderMsg.mediaType && CHAT_MEDIA_BUBBLE_TYPES.has(renderMsg.mediaType)) || isStandaloneHtmlPreview;
+                    // Empty bubble: no visible content AND no visual media AND no folded panel.
+                    const isEmptyBubble = !isVisualMedia && !visibleContent && uiRole(msg) !== "system" && !hasFoldedPanel;
+                    // 拉黑期间 TA 发来的消息：旁边挂微信同款红色感叹号（解除拉黑后历史消息保留标记）
+                    const blockedSinceMs = session.blacklistedAt ? new Date(session.blacklistedAt).getTime() : NaN;
+                    const blockedEndMs = session.blacklistEndedAt ? new Date(session.blacklistEndedAt).getTime() : NaN;
+                    const msgMs = new Date(msg.createdAt).getTime();
+                    const inBlacklistPeriod = Number.isFinite(blockedSinceMs) && msgMs >= blockedSinceMs
+                        && (session.isBlacklisted ? true : Number.isFinite(blockedEndMs) && msgMs <= blockedEndMs);
+                    const showBlockedBadge = !session.isGroup
+                        && msg.role === "assistant"
+                        && !isSilentThought
+                        && !isEmptyBubble
+                        && inBlacklistPeriod
+                        && !msg.mediaData?.hiddenInChat;
+                    // 已读回执：自己的消息=TA 是否已读；TA 的消息=自己是否已读（TA 视角可见，已读不回由此判定）
+                    const showReadReceipt = (msg.role === "user" || msg.role === "assistant")
+                        && !isSilentThought
+                        && !isEmptyBubble
+                        && !hiddenEmpty
+                        && !msg.mediaData?.hiddenInChat
+                        && (msg.status === "sent" || msg.status === "read");
+                    const selectableStoredId = getSelectableStoredMessageId(msg);
+                    const isMultiSelectable = isMultiSelectMode && !!selectableStoredId && !hiddenEmpty;
+                    const isMultiSelected = !!selectableStoredId && selectedMessageIds.has(selectableStoredId);
+                    const multiSelectWrapperProps = isMultiSelectable ? {
+                        onClickCapture: (e: React.MouseEvent) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleMultiSelectedMessage(selectableStoredId!);
+                        },
+                        "data-multi-select": "",
+                        ...(isMultiSelected ? { "data-selected": "" } : {}),
+                    } : {};
+
+                    return (
+                        <div key={msg.id} className="flex flex-col gap-4" {...(hiddenEmpty ? { style: { display: "none" } } : {})} {...(isEmptyBubble && renderMsg.reasoningText && !showTime ? { "data-reasoning-only": "" } : {})}>
+                            {showTime && (
+                                <div className="flex justify-center w-full">
+                                    <span className="chat-sys-msg py-[2px] px-2 rounded select-none">
+                                        {formatChatUiTime(msg.createdAt)}
+                                    </span>
+                                </div>
+                            )}
+                            {/* 思维链触发条（Claude app 风格）：点击打开底部弹窗 */}
+                            {renderMsg.reasoningText && msg.role !== "user" && uiRole(msg) !== "system" && (
+                                <div className="chat-msg-wrapper" data-role={uiRole(msg)} data-reasoning-row="" style={{ marginBottom: -8 }}>
+                                    <div className="w-[40px] shrink-0" />
+                                    <button
+                                        type="button"
+                                        className="chat-reasoning-trigger"
+                                        onClick={(e) => { e.stopPropagation(); setReasoningSheetText(renderMsg.reasoningText || null); }}
+                                        aria-label="查看思考过程"
+                                    >
+                                        <Clock size={13} strokeWidth={1.8} className="chat-reasoning-trigger-icon" />
+                                        <span className="chat-reasoning-trigger-text">{reasoningPreviewLine(renderMsg.reasoningText)}</span>
+                                        <ChevronRight size={14} strokeWidth={1.8} className="chat-reasoning-trigger-icon" />
+                                    </button>
+                                </div>
+                            )}
+                            <div
+                                id={`message-${msg.id}`}
+                                className="chat-msg-wrapper"
+                                data-role={uiRole(msg)}
+                                {...(isEmptyBubble && renderMsg.reasoningText ? { "data-reasoning-empty": "" } : {})}
+                                {...(isConsecutive ? { "data-consecutive": "" } : {})}
+                                {...(activeMessageId === msg.id ? { "data-active": "" } : {})}
+                                {...(highlightMessageId === msg.id ? { "data-highlight": "" } : {})}
+                                {...multiSelectWrapperProps}
+                            >
+                                {isMultiSelectable && (
+                                    <span className="chat-multi-select-check" aria-hidden="true">
+                                        {isMultiSelected && <Check size={14} strokeWidth={2.5} />}
+                                    </span>
+                                )}
+                                {uiRole(msg) === "system" ? (
+                                    <div
+                                        onPointerDown={(e) => { e.stopPropagation(); handleMessagePointerDown(e, msg.id); }}
+                                        onPointerUp={(e) => handleMessagePointerUp(e)}
+                                        onPointerCancel={handleMessagePointerCancel}
+                                        onPointerLeave={handleMessagePointerCancel}
+                                        onPointerMove={(e) => {
+                                            if (startPosRef.current) {
+                                                const dx = Math.abs(e.clientX - startPosRef.current.x);
+                                                const dy = Math.abs(e.clientY - startPosRef.current.y);
+                                                if (dx > 10 || dy > 10) handleMessagePointerCancel();
+                                            }
+                                        }}
+                                        onContextMenu={(e) => { e.preventDefault(); openMessageContextMenu(msg.id, { x: e.clientX, y: e.clientY }); }}
+                                        className={isSystemInstruction
+                                            ? "chat-system-instruction-card relative cursor-pointer"
+                                            : `chat-sys-msg break-all max-w-[90%] relative cursor-pointer${
+                                                // 骰子旁白：等骰子落定再淡入，避免剧透点数
+                                                msg.content.startsWith("🎲 掷出了") && Date.now() - new Date(msg.createdAt).getTime() < 6000
+                                                    ? " dice-aside-reveal"
+                                                    : ""
+                                            }`}
+                                        {...(activeMessageId === msg.id ? { "data-active": "" } : {})}
+                                    >
+                                        {isSystemInstruction ? (
+                                            <SystemInstructionCard content={msg.content} />
+                                        ) : msg.mediaType === "memory_write_request" ? (
+                                            <MemoryWriteRequestCard
+                                                msg={msg}
+                                                onApprove={handleApproveMemoryWrite}
+                                                onIgnore={handleIgnoreMemoryWrite}
+                                            />
+                                        ) : (
+                                            <>
+                                                {msg.mediaType === "poke"
+                                                    ? (() => {
+                                                        const sender = msg.mediaData?.pokeSender || (msg.role === "user" ? "你" : (character?.name || "对方"));
+                                                        const target = msg.mediaData?.pokeTarget || (msg.role === "user" ? (character?.name || "对方") : "你");
+                                                        const displaySender = sender === userIdentity?.name ? "你" : sender;
+                                                        const displayTarget = target === userIdentity?.name ? "你" : target;
+                                                        return `${displaySender} 拍了拍 ${displayTarget}`;
+                                                    })()
+                                                    : formatSysMsgForUI(msg.content, msg)}
+                                            </>
+                                        )}
+                                        {activeMessageId === msg.id && renderSystemContextMenu(msg)}
+                                    </div>
+                                ) : msg.isRetracted ? (
+                                    <div
+                                        onPointerDown={(e) => { e.stopPropagation(); handleMessagePointerDown(e, msg.id); }}
+                                        onPointerUp={(e) => handleMessagePointerUp(e)}
+                                        onPointerCancel={handleMessagePointerCancel}
+                                        onPointerLeave={handleMessagePointerCancel}
+                                        onPointerMove={(e) => {
+                                            if (startPosRef.current) {
+                                                const dx = Math.abs(e.clientX - startPosRef.current.x);
+                                                const dy = Math.abs(e.clientY - startPosRef.current.y);
+                                                if (dx > 10 || dy > 10) handleMessagePointerCancel();
+                                            }
+                                        }}
+                                        onContextMenu={(e) => { e.preventDefault(); openMessageContextMenu(msg.id, { x: e.clientX, y: e.clientY }); }}
+                                        className="chat-sys-msg mx-auto relative cursor-pointer"
+                                        {...(activeMessageId === msg.id ? { "data-active": "" } : {})}
+                                    >
+                                        {msg.role === "user" ? "你" : (character?.name || "对方")}撤回了一条消息
+                                        {activeMessageId === msg.id && renderDeleteOnlyContextMenu(() => handleDeleteMessage(getStoredActionMessageId(msg)), () => startMultiSelectFromMessage(msg))}
+                                    </div>
+                                ) : (
+                                    <>
+                                        {msg.role !== "user" && !isEmptyBubble && (
+                                            isSilentThought ? (
+                                                /* Silent + inner monologue: no avatar, just heart */
+                                                <div
+                                                    onPointerDown={(e) => { e.stopPropagation(); handleMessagePointerDown(e, msg.id); }}
+                                                    onPointerUp={(e) => handleMessagePointerUp(e)}
+                                                    onPointerCancel={handleMessagePointerCancel}
+                                                    onPointerLeave={handleMessagePointerCancel}
+                                                    onPointerMove={(e) => {
+                                                        if (startPosRef.current) {
+                                                            const dx = Math.abs(e.clientX - startPosRef.current.x);
+                                                            const dy = Math.abs(e.clientY - startPosRef.current.y);
+                                                            if (dx > 10 || dy > 10) handleMessagePointerCancel();
+                                                        }
+                                                    }}
+                                                    onContextMenu={(e) => { e.preventDefault(); openMessageContextMenu(msg.id, { x: e.clientX, y: e.clientY }); }}
+                                                    onClick={(e) => {
+                                                        if (activeMessageId === msg.id) return;
+                                                        e.stopPropagation();
+                                                        setExpandedThinkingId((prev: any) => prev === msg.id ? null : msg.id);
+                                                    }}
+                                                    className="chat-monologue-heart flex items-center justify-center shrink-0 w-[40px] h-[24px] relative cursor-pointer"
+                                                    title={session.isGroup ? `${msg.senderName || "群成员"}的折叠状态` : "查看折叠状态"}
+                                                    aria-label={session.isGroup ? `${msg.senderName || "群成员"}的折叠状态` : "查看折叠状态"}
+                                                    {...(activeMessageId === msg.id ? { "data-active": "" } : {})}
+                                                >
+                                                    <span className="chat-monologue-heart ts-18 leading-none inline-block" {...(expandedMonologueId === msg.id ? { "data-active": "" } : {})}><svg viewBox="0 0 16 16" width="18" height="18" style={{display:"block"}}><path d="M8 14s-6-4-6-8c0-2.5 1.5-4 3.5-4 1 0 2 .5 2.5 1.5C8.5 2.5 9.5 2 10.5 2 12.5 2 14 3.5 14 6c0 4-6 8-6 8z" fill="currentColor"/></svg></span>
+                                                    {activeMessageId === msg.id && renderDeleteOnlyContextMenu(() => handleDeleteMessage(getStoredActionMessageId(msg)), () => startMultiSelectFromMessage(msg))}
+                                                </div>
+                                            ) : (
+                                                <div className="chat-msg-avatar flex flex-col items-center gap-1 shrink-0">
+                                                    {(() => {
+                                                        const senderChar = session.isGroup && msg.senderCharacterId
+                                                            ? groupCharMap.get(msg.senderCharacterId) || character
+                                                            : character;
+                                                        return (
+                                                            <>
+                                                    <div onDoubleClick={() => {
+                                                        const targetChar = session.isGroup && msg.senderCharacterId
+                                                            ? groupCharMap.get(msg.senderCharacterId) || character
+                                                            : character;
+                                                        if (targetChar) sendRichMessage("poke", { pokeTarget: targetChar.name });
+                                                    }} className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden cursor-pointer">
+                                                        {chatAvatarImg(senderChar?.id, "w-full h-full object-cover")}
+                                                    </div>
+                                                            </>
+                                                        );
+                                                    })()}
+                                                </div>
+                                            )
+                                        )}
+                                        {!isSilentThought && !isEmptyBubble && <div
+                                            className={`chat-msg-content-wrap flex flex-col min-w-0 max-w-[70%] ${isStandaloneHtmlPreview ? "chat-msg-content-wrap-html" : ""}`}
+                                            {...(isStandaloneHtmlPreview ? { "data-html": "true" } : {})}
+                                        >
+                                            {session.isGroup && msg.role !== "user" && (
+                                                <span className="chat-group-sender-name">{msg.senderName || ""}{renderGroupRoleBadge(msg.senderCharacterId)}</span>
+                                            )}
+                                            {/* 气泡 + 已读回执同行排列：回执贴在气泡外侧底部，不占气泡内部空间 */}
+                                            <div className="chat-bubble-receipt-row" data-side={msg.role === "user" ? "user" : "assistant"}>
+                                            {showReadReceipt && !isStandaloneHtmlPreview && msg.role === "user" && (
+                                                <span
+                                                    className={`chat-read-receipt${msg.status === "read" ? " is-read" : ""}`}
+                                                    aria-label={msg.status === "read" ? "已读" : "未读"}
+                                                >
+                                                    {msg.status === "read" ? "已读" : "未读"}
+                                                </span>
+                                            )}
+                                            <div
+                                            {...(editingMessageId !== msg.id ? {
+                                                onPointerDown: (e: React.PointerEvent) => { e.stopPropagation(); handleMessagePointerDown(e, msg.id); },
+                                                onPointerUp: (e: React.PointerEvent) => handleMessagePointerUp(e),
+                                                onPointerCancel: handleMessagePointerCancel,
+                                                onPointerLeave: handleMessagePointerCancel,
+                                                onPointerMove: (e: React.PointerEvent) => {
+                                                    if (startPosRef.current) {
+                                                        const dx = Math.abs(e.clientX - startPosRef.current.x);
+                                                        const dy = Math.abs(e.clientY - startPosRef.current.y);
+                                                        if (dx > 10 || dy > 10) handleMessagePointerCancel();
+                                                    }
+                                                },
+                                                onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); openMessageContextMenu(msg.id, { x: e.clientX, y: e.clientY }); },
+                                            } : {})}
+                                            className={`chat-bubble-role-${msg.role} ${isMediaBubble ? "chat-bubble-media" : ""} ${isStandaloneHtmlPreview ? "chat-bubble-html-preview" : ""} ${renderMsg.mediaType === "music_share" ? "chat-bubble-music-share" : ""} ${renderMsg.mediaType === "gift" || renderMsg.mediaType === "image" || isStandaloneHtmlPreview ? "rounded-none" : "rounded-md"} break-words relative cursor-pointer select-none`}
+                                            style={isStandaloneHtmlPreview ? STANDALONE_CARD_BUBBLE_STYLE : undefined}
+                                            data-ui={msg.role === "user" ? "bubble-user" : "bubble-bot"}
+                                            data-msg-id={msg.id}
+                                            {...(activeMessageId === msg.id ? { "data-active": "" } : {})}
+                                            >
+                                            {/* Message Actions Popup */}
+                                            {activeMessageId === msg.id && renderBubbleContextMenu(msg)}
+
+                                            <MessageBubble
+                                                msg={renderMsg}
+                                                displayContent={msg.displayProjected ? undefined : bubbleDisplayContent}
+                                                charName={character?.name}
+                                                userName={userIdentity?.name || "你"}
+                                                groupSize={session.isGroup ? (session.participantIds?.length || 0) + (session.isSpectator ? 0 : 1) : undefined}
+                                                onShowDetail={setMediaDetailMsg}
+                                                characterId={msg.senderCharacterId || session.contactId}
+                                                onUpdate={(updated) => setMessages((prev: any) => prev.map((m: any) => m.id === updated.id ? updated : m))}
+                                                onSystemMessage={(text) => {
+                                                    const sysMsg = pushChatMessage({
+                                                        sessionId: session.id,
+                                                        role: "system",
+                                                        content: text,
+                                                    });
+                                                    setMessages((prev: any) => [...prev, sysMsg]);
+                                                }}
+                                                onMusicPlay={handleMusicCardPlay}
+                                                onActionSelect={(text) => chatTextInputRef.current?.appendText(text)}
+                                                defaultTranslationExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                                            />
+                                        </div>
+                                        {showReadReceipt && !isStandaloneHtmlPreview && msg.role !== "user" && (
+                                            <span
+                                                className={`chat-read-receipt${msg.status === "read" ? " is-read" : ""}`}
+                                                aria-label={msg.status === "read" ? "已读" : "未读"}
+                                            >
+                                                {msg.status === "read" ? "已读" : "未读"}
+                                            </span>
+                                        )}
+                                        </div>
+                                        </div>}
+                                        {showBlockedBadge && (
+                                            <div
+                                                className="self-center shrink-0 w-[18px] h-[18px] rounded-full flex items-center justify-center"
+                                                style={{ background: "#F43530" }}
+                                                title="对方已被你拉黑，消息被拒收"
+                                                aria-label="对方已被你拉黑，消息被拒收"
+                                            >
+                                                <svg viewBox="0 0 16 16" width="12" height="12" style={{ display: "block" }} aria-hidden="true">
+                                                    <rect x="7.1" y="2.6" width="1.8" height="6.2" rx="0.9" fill="#fff" />
+                                                    <circle cx="8" cy="12.2" r="1.15" fill="#fff" />
+                                                </svg>
+                                            </div>
+                                        )}
+                                        {msg.role !== "user" && !isSilentThought && !isEmptyBubble && hasFoldedPanel && (
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); setExpandedThinkingId((prev: any) => prev === msg.id ? null : msg.id); }}
+                                                className="chat-monologue-heart bg-none border-none cursor-pointer p-1 ts-14 leading-none self-end shrink-0 -ml-2"
+                                                {...(expandedMonologueId === msg.id ? { "data-active": "" } : {})}
+                                                title="查看折叠状态"
+                                                aria-label="查看折叠状态"
+                                            >
+                                                <svg viewBox="0 0 16 16" width="14" height="14" style={{display:"block"}}>
+                                                    <path d="M8 14s-6-4-6-8c0-2.5 1.5-4 3.5-4 1 0 2 .5 2.5 1.5C8.5 2.5 9.5 2 10.5 2 12.5 2 14 3.5 14 6c0 4-6 8-6 8z" fill="currentColor"/>
+                                                </svg>
+                                            </button>
+                                        )}
+                                        {msg.role === "user" && !isEmptyBubble && (
+                                            <div className="chat-msg-avatar w-[40px] h-[40px] rounded-[20px] bg-[var(--c-page-body-bg)] shrink-0 flex items-center justify-center overflow-hidden">
+                                                {userIdentity?.avatarUrl ? (
+                                                    <img src={userIdentity.avatarUrl} alt="Me" className="w-full h-full object-cover rounded-[20px]" />
+                                                ) : (
+                                                    <User size={20} color="var(--c-text)" />
+                                                )}
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                            {/* Voice message: text transcription bubble */}
+                            {renderMsg.mediaType === "audio" && voiceTextIds.has(msg.id) && renderMsg.mediaData?.label && (
+                                <div className={`chat-msg-wrapper`} data-role={uiRole(msg)} style={{ marginTop: -12 }}>
+                                    {msg.role !== "user" && <div className="w-[40px] shrink-0" />}
+                                    <div className="voice-msg-text-bubble">
+                                        <BilingualTextBlock
+                                            text={msg.displayProjected ? (renderMsg.mediaData?.label || "") : renderDisplayText(renderMsg.mediaData?.label || "", msg.role === "user" ? 1 : 2, false)}
+                                            mode="markdown"
+                                            defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                                        />
+                                    </div>
+                                    {msg.role === "user" && <div className="w-[40px] shrink-0" />}
+                                </div>
+                            )}
+                            {/* 状态栏：一律裸渲染，不套便利贴外框（自定义模式下交给用户的渲染代码，
+                                否则 [状态栏] 原文直接走 markdown/内联 HTML，让 AI 直出的卡片自己当外框）。
+                                状态值跟内心独白走（留在便利贴里）；这轮没有内心独白时便利贴不出现，
+                                数值裸放在状态栏上方。 */}
+                            {hasFoldedPanel && expandedMonologueId === msg.id
+                                && (renderMsg.statusPanel || (!renderMsg.innerMonologue && cardStateValues && cardStateValues.length > 0)) && (
+                                <div className="chat-status-bare">
+                                    {!renderMsg.innerMonologue && cardStateValues && cardStateValues.length > 0 && (
+                                        <StateValuesPanel stateValues={cardStateValues} />
+                                    )}
+                                    {renderMsg.statusPanel && (
+                                        msg.statusRegionMode === "custom" && statusRegionCfg.renderHtml.trim() ? (
+                                            <CustomStatusFrame html={statusRegionCfg.renderHtml} raw={renderMsg.statusPanel} />
+                                        ) : (
+                                            <BilingualTextBlock text={msg.displayProjected ? renderMsg.statusPanel : renderDisplayText(renderMsg.statusPanel, 6, false)} mode="markdown" defaultExpanded={session.collapseBilingualTranslation !== false ? false : true} />
+                                        )
+                                    )}
+                                </div>
+                            )}
+                            {/* Inner monologue card (sticky note / journal style) */}
+                            {hasFoldedPanel && expandedMonologueId === msg.id && renderMsg.innerMonologue && (
+                                <div className="chat-thought-card">
+                                    {/* Decorative washi tape */}
+                                    <div className="chat-thought-tape-left" />
+                                    <div className="chat-thought-tape-right" />
+                                    {/* Title */}
+                                    <div className="chat-thought-title">
+                                        💭 内心独白
+                                    </div>
+                                    {/* State values panel */}
+                                    {cardStateValues && cardStateValues.length > 0 && (
+                                        <StateValuesPanel stateValues={cardStateValues} />
+                                    )}
+                                    <div className="chat-thought-body">
+                                        <BilingualTextBlock text={msg.displayProjected ? renderMsg.innerMonologue : renderDisplayText(renderMsg.innerMonologue, 6, false)} mode="markdown" defaultExpanded={session.collapseBilingualTranslation !== false ? false : true} />
+                                    </div>
+                                    {/* Signature */}
+                                    <div className="chat-thought-sig">
+                                        — {session.isGroup ? (msg.senderName || "群成员") : (character?.name || "TA")}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+                {/* 流式生成预览：生成中实时显示原文增量，结束后由正式消息替换 */}
+                {!offlineMode && streamPreview && (
+                    <div className="chat-stream-preview" data-ui="stream-preview">
+                        {session.isGroup && streamPreview.parts && streamPreview.parts.length > 0 ? (
+                            /* 按空行定型：写完的段落立即成为独立气泡（与最终拆条同规则），只有最后一段带光标打字 */
+                            streamPreview.parts.map((part: any, i: number) => {
+                                const senderChar = groupCharMap.get(part.characterId) || character;
+                                const isLastPart = i === (streamPreview.parts?.length ?? 0) - 1;
+                                return part.texts.map((segText: any, j: number) => {
+                                    const isTyping = isLastPart && j === part.texts.length - 1;
+                                    return (
+                                        <div key={`stream-${part.characterId}-${i}-${j}`} className="chat-msg-wrapper" data-role="assistant">
+                                            <div className="chat-msg-avatar flex flex-col items-center gap-1 shrink-0">
+                                                <div className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden">
+                                                    {chatAvatarImg(senderChar?.id, "w-full h-full object-cover")}
+                                                </div>
+                                            </div>
+                                            <div className="chat-msg-content-wrap flex flex-col min-w-0 max-w-[70%]">
+                                                <span className="chat-group-sender-name">{part.characterName}</span>
+                                                <div className="chat-bubble-role-assistant chat-stream-bubble break-words rounded-md px-3 py-2">
+                                                    {/* 流式预览用轻量 pre-wrap 渲染：避免每帧跑 markdown/双语解析导致闪烁卡顿 */}
+                                                    <div className="chat-stream-text whitespace-pre-wrap break-words">{segText}</div>
+                                                    {isTyping && <span className="chat-stream-cursor" aria-hidden="true" />}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                });
+                            })
+                        ) : streamPreview.texts && streamPreview.texts.length > 0 ? (
+                            streamPreview.texts.map((segText: any, j: number) => {
+                                const isTyping = j === (streamPreview.texts?.length ?? 0) - 1;
+                                return (
+                                    <div key={`stream-seg-${j}`} className="chat-msg-wrapper" data-role="assistant">
+                                        <div className="chat-msg-avatar flex flex-col items-center gap-1 shrink-0">
+                                            <div className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden">
+                                                {chatAvatarImg(character?.id, "w-full h-full object-cover")}
+                                            </div>
+                                        </div>
+                                        <div className="chat-msg-content-wrap flex flex-col min-w-0 max-w-[70%]">
+                                            <div className="chat-bubble-role-assistant chat-stream-bubble break-words rounded-md px-3 py-2">
+                                                {/* 流式预览用轻量 pre-wrap 渲染：避免每帧跑 markdown/双语解析导致闪烁卡顿 */}
+                                                <div className="chat-stream-text whitespace-pre-wrap break-words">{segText}</div>
+                                                {isTyping && <span className="chat-stream-cursor" aria-hidden="true" />}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        ) : null}
+                    </div>
+                )}
+        </>
+    );
+});
+
 export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [liveCSS, setLiveCSS] = useState(session.customCSS || "");
     const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -4225,7 +5011,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     // 线下 XML 构造与提示词查看器共用 lib/offline-prompt-builder（社区 #108），
     // 保证「预览 = 真实发出的提示词」；此处仅包一层稳定引用。
     // 自定义状态栏：custom 生效时新消息盖戳，折叠区改走用户渲染代码；旧消息按原生渲染
-    const statusRegionCfg = getStatusRegionConfig(session.id);
+    const statusRegionCfg = useMemo(() => getStatusRegionConfig(session.id), [session.id]);
     const customStatusActive = isCustomStatusRegionActive(statusRegionCfg);
 
     const formatOfflineTurnXml = useCallback((turn: ChatOfflineTurn): string => formatOfflineTurnXmlShared(turn), []);
@@ -5632,6 +6418,35 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         backgroundRepeat: "no-repeat",
     } : undefined;
 
+    // ── 消息列表上下文：每 render 同步最新闭包；version 不变时 ChatMessageList 整体跳过重绘 ──
+    const msgListCtxRef = useRef<Record<string, any>>({});
+    msgListCtxRef.current = {
+        session, activeMessageId, activeOfflineTarget, character,
+        chatTextInputRef, deleteWeixinCloudBeforeLocal, editingMessageId, expandedMonologueId,
+        expandedVoiceCallIds, formatSysMsgForUI, getMessageDisplayContent, getOfflineDisplayText,
+        getSelectableStoredMessageId, getStoredActionMessageId, groupCharMap, handleApproveMemoryWrite,
+        handleDeleteMessage, handleIgnoreMemoryWrite, handleMessagePointerCancel, handleMessagePointerDown,
+        handleMessagePointerUp, handleMusicCardPlay, handleOfflinePointerDown, hasMore,
+        hasMoreOfflineTurns, highlightMessageId, isMultiSelectMode, isOfflineGenerating,
+        loadMore, loadMoreOfflineTurns, messages, offlineDisplayByTurnId,
+        offlineMode, offlineStreamPreview, offlineTurns, openMessageContextMenu,
+        openOfflineContextMenu, pendingOfflineUserText, projectedMessages, renderBubbleContextMenu,
+        renderDeleteOnlyContextMenu, renderDisplayText, renderGroupRoleBadge, renderOfflineContextMenu,
+        renderSystemContextMenu, selectedMessageIds, sendRichMessage, setExpandedThinkingId,
+        setExpandedVoiceCallIds, setMediaDetailMsg, setMessages, setReasoningSheetText,
+        startMultiSelectFromMessage, startPosRef, statusRegionCfg, streamPreview,
+        toggleMultiSelectedMessage, userIdentity, visibleOfflineTurns,
+        voiceCallGroups, voiceTextIds
+    };
+    const msgListVersion = useMemo(() => ({}), [
+        messages, projectedMessages, streamPreview, offlineStreamPreview, offlineMode,
+        offlineTurns, visibleOfflineTurns, offlineDisplayByTurnId, hasMore, hasMoreOfflineTurns,
+        pendingOfflineUserText, isOfflineGenerating, voiceCallGroups, voiceTextIds,
+        expandedVoiceCallIds, expandedMonologueId, activeMessageId, activeOfflineTarget,
+        editingMessageId, highlightMessageId, isMultiSelectMode, selectedMessageIds,
+        character, userIdentity, session, statusRegionCfg, groupCharMap,
+    ]);
+
     return (
         <div ref={wrapperRef} className={`session-${session.id} chat-room-wrapper page-shell inset-0 flex flex-col z-20`} style={chatRoomBackgroundStyle} {...(bgLoading ? { "data-loading": "" } : {})} {...(bgImageResolved ? { "data-has-bg-image": "" } : {})} {...(showSettings ? { "data-settings-open": "" } : {})}>
             {/* Custom CSS Injection for this session — scoped to prevent leaking */}
@@ -5686,764 +6501,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     if (showPlusMenu) setShowPlusMenu(false);
                 }}
             >
-                {offlineMode && (
-                    <div className="chat-offline-body">
-                        {offlineTurns.length === 0 && !pendingOfflineUserText ? (
-                            <div className="chat-offline-empty">
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0Z" /><circle cx="12" cy="10" r="3" /></svg>
-                                线下模式
-                            </div>
-                        ) : null}
-                        {hasMoreOfflineTurns && (
-                            <button
-                                type="button"
-                                className="chat-sys-msg chat-load-more-button"
-                                onClick={loadMoreOfflineTurns}
-                            >
-                                <span>查看更多线下记录</span>
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                    <polyline points="18 15 12 9 6 15" />
-                                </svg>
-                            </button>
-                        )}
-                        {visibleOfflineTurns.map((turn, turnIdx) => {
-                            const offlineDisplay = offlineDisplayByTurnId.get(turn.id) ?? getOfflineDisplayText(turn);
-                            const assistantHasHtmlPreview = hasOfflineHtmlPreview(offlineDisplay.assistantContent);
-                            const prevTime = turnIdx > 0 ? visibleOfflineTurns[turnIdx - 1].createdAt : null;
-                            const showTime = !prevTime || shouldShowTimestamp(turn.createdAt, prevTime);
-                            return (
-                            <Fragment key={turn.id}>
-                            {showTime && <div className="chat-offline-time">{formatChatUiTime(turn.createdAt)}</div>}
-                            <div className="chat-offline-turn">
-                                <div className="chat-offline-entry" data-role="user" style={offlineDisplay.userContent.trim() ? undefined : { display: "none" }}>
-                                    {/* 头像占位：默认 display:none（见 chat.css），供自定义 CSS 显示 */}
-                                    <div className="chat-offline-avatar" aria-hidden="true">
-                                        {userIdentity?.avatarUrl ? <img src={userIdentity.avatarUrl} alt="" /> : <User size={18} color="var(--c-text)" />}
-                                    </div>
-                                    <div className="chat-offline-label">你</div>
-                                    <div
-                                        className="chat-offline-text"
-                                        onPointerDown={(e) => { e.stopPropagation(); handleOfflinePointerDown(e, { turnId: turn.id, role: "user" }); }}
-                                        onPointerUp={(e) => handleMessagePointerUp(e)}
-                                        onPointerCancel={handleMessagePointerCancel}
-                                        onPointerLeave={handleMessagePointerCancel}
-                                        onPointerMove={(e) => {
-                                            if (startPosRef.current) {
-                                                const dx = Math.abs(e.clientX - startPosRef.current.x);
-                                                const dy = Math.abs(e.clientY - startPosRef.current.y);
-                                                if (dx > 10 || dy > 10) handleMessagePointerCancel();
-                                            }
-                                        }}
-                                        onContextMenu={(e) => { e.preventDefault(); openOfflineContextMenu({ turnId: turn.id, role: "user" }, { x: e.clientX, y: e.clientY }); }}
-                                        {...(activeOfflineTarget?.turnId === turn.id && activeOfflineTarget.role === "user" ? { "data-active": "" } : {})}
-                                    >
-                                        {activeOfflineTarget?.turnId === turn.id && activeOfflineTarget.role === "user" && renderOfflineContextMenu(turn, "user")}
-                                        <BilingualTextBlock
-                                            text={offlineDisplay.userContent}
-                                            mode="markdown"
-                                            defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
-                                        />
-                                    </div>
-                                </div>
-                                <div className="chat-offline-entry" data-role="assistant">
-                                    {/* 头像占位：默认 display:none（见 chat.css），供自定义 CSS 显示 */}
-                                    <div className="chat-offline-avatar" aria-hidden="true">
-                                        {chatAvatarImg(character?.id)}
-                                    </div>
-                                    <div className="chat-offline-label-row">
-                                        <div className="chat-offline-label">{session.isGroup ? (session.groupName || "群聊") : (character?.name || "对方")}</div>
-                                        {assistantHasHtmlPreview ? (
-                                            <button
-                                                type="button"
-                                                className="chat-offline-menu-trigger"
-                                                aria-label="线下回复操作"
-                                                title="线下回复操作"
-                                                onPointerDown={(e) => {
-                                                    e.stopPropagation();
-                                                    handleMessagePointerCancel();
-                                                }}
-                                                onClick={(e) => {
-                                                    e.preventDefault();
-                                                    e.stopPropagation();
-                                                    const rect = e.currentTarget.getBoundingClientRect();
-                                                    openOfflineContextMenu({ turnId: turn.id, role: "assistant" }, {
-                                                        x: rect.left + rect.width / 2,
-                                                        y: rect.bottom,
-                                                    });
-                                                }}
-                                            >
-                                                <MoreHorizontal size={16} strokeWidth={2} />
-                                            </button>
-                                        ) : null}
-                                    </div>
-                                    {/* 思维链触发条（线下模式，Claude app 风格）：优先展示预设格式 <thinking> 解析结果，缺省回退模型 API 原生思考 */}
-                                    {(turn.thinkingText || turn.reasoningText) && (
-                                        <button
-                                            type="button"
-                                            className="chat-reasoning-trigger"
-                                            onClick={(e) => { e.stopPropagation(); setReasoningSheetText(turn.thinkingText || turn.reasoningText || null); }}
-                                            aria-label="查看思考过程"
-                                        >
-                                            <Clock size={13} strokeWidth={1.8} className="chat-reasoning-trigger-icon" />
-                                            <span className="chat-reasoning-trigger-text">{reasoningPreviewLine(turn.thinkingText || turn.reasoningText || "")}</span>
-                                            <ChevronRight size={14} strokeWidth={1.8} className="chat-reasoning-trigger-icon" />
-                                        </button>
-                                    )}
-                                    <div
-                                        className="chat-offline-text"
-                                        onPointerDown={(e) => { e.stopPropagation(); handleOfflinePointerDown(e, { turnId: turn.id, role: "assistant" }); }}
-                                        onPointerUp={(e) => handleMessagePointerUp(e)}
-                                        onPointerCancel={handleMessagePointerCancel}
-                                        onPointerLeave={handleMessagePointerCancel}
-                                        onPointerMove={(e) => {
-                                            if (startPosRef.current) {
-                                                const dx = Math.abs(e.clientX - startPosRef.current.x);
-                                                const dy = Math.abs(e.clientY - startPosRef.current.y);
-                                                if (dx > 10 || dy > 10) handleMessagePointerCancel();
-                                            }
-                                        }}
-                                        onContextMenu={(e) => { e.preventDefault(); openOfflineContextMenu({ turnId: turn.id, role: "assistant" }, { x: e.clientX, y: e.clientY }); }}
-                                        {...(activeOfflineTarget?.turnId === turn.id && activeOfflineTarget.role === "assistant" ? { "data-active": "" } : {})}
-                                    >
-                                        {activeOfflineTarget?.turnId === turn.id && activeOfflineTarget.role === "assistant" && renderOfflineContextMenu(turn, "assistant")}
-                                        <OfflineAssistantTextBlock
-                                            text={offlineDisplay.assistantContent}
-                                            defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
-                                        />
-                                    </div>
-                                    {turn.summary.trim() && (
-                                        <details className="chat-offline-summary-fold">
-                                            <summary>摘要（{turn.summaryTag || "summary"}）</summary>
-                                            <div className="chat-offline-summary-content">
-                                                <BilingualTextBlock
-                                                    text={offlineDisplay.summary}
-                                                    mode="markdown"
-                                                    defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
-                                                />
-                                            </div>
-                                        </details>
-                                    )}
-                                </div>
-                            </div>
-                            </Fragment>
-                            );
-                        })}
-                        {(pendingOfflineUserText || isOfflineGenerating) && (
-                            <div className="chat-offline-turn">
-                                <div className="chat-offline-entry" data-role="user" style={pendingOfflineUserText ? undefined : { display: "none" }}>
-                                    {/* 头像占位：默认 display:none（见 chat.css），供自定义 CSS 显示 */}
-                                    <div className="chat-offline-avatar" aria-hidden="true">
-                                        {userIdentity?.avatarUrl ? <img src={userIdentity.avatarUrl} alt="" /> : <User size={18} color="var(--c-text)" />}
-                                    </div>
-                                    <div className="chat-offline-label">你</div>
-                                    <div className="chat-offline-text">
-                                        <BilingualTextBlock
-                                            text={renderDisplayText(pendingOfflineUserText, 1, true)}
-                                            mode="markdown"
-                                            defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
-                                        />
-                                    </div>
-                                </div>
-                                {offlineStreamPreview?.content ? (
-                                    /* 流式预览原地长出：与正式剧情正文同结构（头像/角色名/正文区），
-                                       正文用轻量 pre-wrap 渲染（避免每帧 markdown/双语解析），落库时原地换成正式排版 */
-                                    <div className="chat-offline-entry" data-role="assistant">
-                                        <div className="chat-offline-avatar" aria-hidden="true">
-                                            {chatAvatarImg(character?.id)}
-                                        </div>
-                                        <div className="chat-offline-label-row">
-                                            <div className="chat-offline-label">{session.isGroup ? (session.groupName || "群聊") : (character?.name || "对方")}</div>
-                                        </div>
-                                        <div className="chat-offline-text">
-                                            <div className="chat-stream-text whitespace-pre-wrap break-words">{offlineStreamPreview.content}</div>
-                                            <span className="chat-stream-cursor" aria-hidden="true" />
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="chat-offline-generating">
-                                        <span>线下回复生成中</span>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                )}
-                {!offlineMode && hasMore && (
-                    <button
-                        type="button"
-                        className="chat-sys-msg chat-load-more-button"
-                        onClick={loadMore}
-                    >
-                        <span>查看更多消息</span>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="18 15 12 9 6 15" />
-                        </svg>
-                    </button>
-                )}
-                {!offlineMode && projectedMessages.map((msg, idx) => {
-                    // ── Voice call group: collapsed widget ──
-                    const vcGroup = voiceCallGroups.groups.find(g => g.startIdx === idx);
-                    if (vcGroup) {
-                        const isExpanded = expandedVoiceCallIds.has(vcGroup.startId);
-                        const groupMessages = projectedMessages.slice(vcGroup.startIdx, vcGroup.endIdx + 1);
-                        const chatCount = groupMessages.filter(m => uiRole(m) !== "system").length;
-                        return (
-                            <div key={`vc-${vcGroup.startId}`} className="flex flex-col gap-2">
-                                <div
-                                    onPointerDown={(e) => { e.stopPropagation(); handleMessagePointerDown(e, `vc-${vcGroup.startId}`); }}
-                                    onPointerUp={(e) => handleMessagePointerUp(e)}
-                                    onPointerCancel={handleMessagePointerCancel}
-                                    onPointerLeave={handleMessagePointerCancel}
-                                    onPointerMove={(e) => {
-                                        if (startPosRef.current) {
-                                            const dx = Math.abs(e.clientX - startPosRef.current.x);
-                                            const dy = Math.abs(e.clientY - startPosRef.current.y);
-                                            if (dx > 10 || dy > 10) handleMessagePointerCancel();
-                                        }
-                                    }}
-                                    onContextMenu={(e) => { e.preventDefault(); openMessageContextMenu(`vc-${vcGroup.startId}`, { x: e.clientX, y: e.clientY }); }}
-                                    onClick={() => {
-                                        if (activeMessageId === `vc-${vcGroup.startId}`) return;
-                                        setExpandedVoiceCallIds(prev => {
-                                            const next = new Set(prev);
-                                            if (next.has(vcGroup.startId)) next.delete(vcGroup.startId);
-                                            else next.add(vcGroup.startId);
-                                            return next;
-                                        });
-                                    }}
-                                    className="chat-sys-msg flex items-center justify-center gap-[6px] py-[6px] px-[14px] mx-auto rounded-2xl cursor-pointer relative"
-                                    {...(activeMessageId === `vc-${vcGroup.startId}` ? { "data-active": "" } : {})}
-                                >
-                                    {vcGroup.callType === "video" ? (
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="M23 7l-7 5 7 5V7z" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-                                        </svg>
-                                    ) : (
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
-                                        </svg>
-                                    )}
-                                    <span>{vcGroup.callType === "video" ? "视频通话" : "语音通话"}{vcGroup.duration ? ` ${vcGroup.duration}` : ""}{chatCount > 0 ? ` · ${chatCount}条消息` : ""}</span>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                                        className="ui-chevron-down-flip" {...(isExpanded ? { "data-open": "" } : {})}>
-                                        <polyline points="6 9 12 15 18 9" />
-                                    </svg>
-                                    {activeMessageId === `vc-${vcGroup.startId}` && renderDeleteOnlyContextMenu(() => {
-                                        const groupMsgIds = groupMessages.map(m => m.id);
-                                        void deleteWeixinCloudBeforeLocal(groupMessages, () => {
-                                            groupMsgIds.forEach(id => deleteChatMessage(id));
-                                            setMessages(prev => prev.filter(m => !groupMsgIds.includes(m.id)));
-                                        });
-                                    })}
-                                </div>
-                                {isExpanded && (
-                                    <div className="chat-vc-group-border">
-                                        {groupMessages.map((gMsg) => (
-                                            uiRole(gMsg) === "system" ? (
-                                                <div key={gMsg.id} className="flex justify-center">
-                                                    <div
-                                                        onPointerDown={(e) => { e.stopPropagation(); handleMessagePointerDown(e, gMsg.id); }}
-                                                        onPointerUp={(e) => handleMessagePointerUp(e)}
-                                                        onPointerCancel={handleMessagePointerCancel}
-                                                        onPointerLeave={handleMessagePointerCancel}
-                                                        onPointerMove={(e) => {
-                                                            if (startPosRef.current) {
-                                                                const dx = Math.abs(e.clientX - startPosRef.current.x);
-                                                                const dy = Math.abs(e.clientY - startPosRef.current.y);
-                                                                if (dx > 10 || dy > 10) handleMessagePointerCancel();
-                                                            }
-                                                        }}
-                                                        onContextMenu={(e) => { e.preventDefault(); openMessageContextMenu(gMsg.id, { x: e.clientX, y: e.clientY }); }}
-                                                        className="chat-sys-msg relative cursor-pointer"
-                                                        {...(activeMessageId === gMsg.id ? { "data-active": "" } : {})}
-                                                    >
-                                                        {formatSysMsgForUI(gMsg.content, gMsg)}
-                                                        {activeMessageId === gMsg.id && renderDeleteOnlyContextMenu(() => handleDeleteMessage(getStoredActionMessageId(gMsg)))}
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <div key={gMsg.id} className={`flex ${gMsg.role === "user" ? "justify-end" : "justify-start"}`}>
-                                                    <div className="flex flex-col min-w-0 max-w-[75%]">
-                                                        {session.isGroup && gMsg.role !== "user" && (
-                                                            <span className="chat-group-sender-name">{gMsg.senderName || ""}{renderGroupRoleBadge(gMsg.senderCharacterId)}</span>
-                                                        )}
-                                                        <div
-                                                            onPointerDown={(e) => { e.stopPropagation(); handleMessagePointerDown(e, gMsg.id); }}
-                                                            onPointerUp={(e) => handleMessagePointerUp(e)}
-                                                            onPointerCancel={handleMessagePointerCancel}
-                                                            onPointerLeave={handleMessagePointerCancel}
-                                                            onPointerMove={(e) => {
-                                                                if (startPosRef.current) {
-                                                                    const dx = Math.abs(e.clientX - startPosRef.current.x);
-                                                                    const dy = Math.abs(e.clientY - startPosRef.current.y);
-                                                                    if (dx > 10 || dy > 10) handleMessagePointerCancel();
-                                                                }
-                                                            }}
-                                                            onContextMenu={(e) => { e.preventDefault(); openMessageContextMenu(gMsg.id, { x: e.clientX, y: e.clientY }); }}
-                                                            className={`chat-bubble-role-${gMsg.role} py-2 px-3 rounded-md break-words relative cursor-pointer`}
-                                                            {...(activeMessageId === gMsg.id ? { "data-active": "" } : {})}
-                                                        >
-                                                            <BilingualTextBlock
-                                                                text={gMsg.displayProjected ? gMsg.content : renderDisplayText(gMsg.content, gMsg.role === "user" ? 1 : 2, false)}
-                                                                mode="markdown"
-                                                                defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
-                                                            />
-                                                            {activeMessageId === gMsg.id && renderBubbleContextMenu(gMsg, { allowMultiSelect: false })}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            )
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    }
-
-                    // Skip messages that belong to a voice call group (rendered above)
-                    if (voiceCallGroups.memberSet.has(idx)) return null;
-
-                    const renderMsg = msg;
-                    const isSystemInstruction = isSystemInstructionMessage(renderMsg);
-                    const bubbleDisplayContent = getMessageDisplayContent(renderMsg);
-                    let prevVisibleMsg: RenderChatMessage | null = null;
-                    for (let prevIdx = idx - 1; prevIdx >= 0; prevIdx -= 1) {
-                        if (voiceCallGroups.memberSet.has(prevIdx)) continue;
-                        const candidate = projectedMessages[prevIdx];
-                        const candidateDisplayContent = getMessageDisplayContent(candidate);
-                        if (isHiddenChatFlowMessage(candidate, candidateDisplayContent)) continue;
-                        prevVisibleMsg = candidate;
-                        break;
-                    }
-                    const showTime = shouldShowTimestamp(msg.createdAt, prevVisibleMsg?.createdAt ?? null);
-                    const isConsecutive = prevVisibleMsg && !showTime && uiRole(prevVisibleMsg) === uiRole(msg) && uiRole(msg) !== "system"
-                        && (!session.isGroup || prevVisibleMsg.senderCharacterId === msg.senderCharacterId);
-                    // Hide bubbles with no visible content (empty text, stripped music tags, etc.)
-                    const visibleContent = getChatFlowVisibleContent(renderMsg, bubbleDisplayContent);
-                    const isVisualMedia = isChatVisualMedia(renderMsg);
-                    const hiddenEmpty = isHiddenChatFlowMessage(renderMsg, bubbleDisplayContent);
-                    const hasFoldedPanel = !!(renderMsg.statusPanel || renderMsg.innerMonologue);
-                    // 内心卡片只展示本轮实际输出的状态值；旧数据没有 freshStateValues 时回退到合并快照
-                    const cardStateValues = msg.freshStateValues ?? msg.stateValues;
-                    const isSilentThought = !visibleContent && !renderMsg.mediaType && hasFoldedPanel && msg.role !== "user";
-                    const isStandaloneHtmlPreview = !renderMsg.mediaType && isStandaloneHtmlPreviewContent(bubbleDisplayContent);
-                    const isMediaBubble = (renderMsg.mediaType && CHAT_MEDIA_BUBBLE_TYPES.has(renderMsg.mediaType)) || isStandaloneHtmlPreview;
-                    // Empty bubble: no visible content AND no visual media AND no folded panel.
-                    const isEmptyBubble = !isVisualMedia && !visibleContent && uiRole(msg) !== "system" && !hasFoldedPanel;
-                    // 拉黑期间 TA 发来的消息：旁边挂微信同款红色感叹号（解除拉黑后历史消息保留标记）
-                    const blockedSinceMs = session.blacklistedAt ? new Date(session.blacklistedAt).getTime() : NaN;
-                    const blockedEndMs = session.blacklistEndedAt ? new Date(session.blacklistEndedAt).getTime() : NaN;
-                    const msgMs = new Date(msg.createdAt).getTime();
-                    const inBlacklistPeriod = Number.isFinite(blockedSinceMs) && msgMs >= blockedSinceMs
-                        && (session.isBlacklisted ? true : Number.isFinite(blockedEndMs) && msgMs <= blockedEndMs);
-                    const showBlockedBadge = !session.isGroup
-                        && msg.role === "assistant"
-                        && !isSilentThought
-                        && !isEmptyBubble
-                        && inBlacklistPeriod
-                        && !msg.mediaData?.hiddenInChat;
-                    // 已读回执：自己的消息=TA 是否已读；TA 的消息=自己是否已读（TA 视角可见，已读不回由此判定）
-                    const showReadReceipt = (msg.role === "user" || msg.role === "assistant")
-                        && !isSilentThought
-                        && !isEmptyBubble
-                        && !hiddenEmpty
-                        && !msg.mediaData?.hiddenInChat
-                        && (msg.status === "sent" || msg.status === "read");
-                    const selectableStoredId = getSelectableStoredMessageId(msg);
-                    const isMultiSelectable = isMultiSelectMode && !!selectableStoredId && !hiddenEmpty;
-                    const isMultiSelected = !!selectableStoredId && selectedMessageIds.has(selectableStoredId);
-                    const multiSelectWrapperProps = isMultiSelectable ? {
-                        onClickCapture: (e: React.MouseEvent) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            toggleMultiSelectedMessage(selectableStoredId!);
-                        },
-                        "data-multi-select": "",
-                        ...(isMultiSelected ? { "data-selected": "" } : {}),
-                    } : {};
-
-                    return (
-                        <div key={msg.id} className="flex flex-col gap-4" {...(hiddenEmpty ? { style: { display: "none" } } : {})} {...(isEmptyBubble && renderMsg.reasoningText && !showTime ? { "data-reasoning-only": "" } : {})}>
-                            {showTime && (
-                                <div className="flex justify-center w-full">
-                                    <span className="chat-sys-msg py-[2px] px-2 rounded select-none">
-                                        {formatChatUiTime(msg.createdAt)}
-                                    </span>
-                                </div>
-                            )}
-                            {/* 思维链触发条（Claude app 风格）：点击打开底部弹窗 */}
-                            {renderMsg.reasoningText && msg.role !== "user" && uiRole(msg) !== "system" && (
-                                <div className="chat-msg-wrapper" data-role={uiRole(msg)} data-reasoning-row="" style={{ marginBottom: -8 }}>
-                                    <div className="w-[40px] shrink-0" />
-                                    <button
-                                        type="button"
-                                        className="chat-reasoning-trigger"
-                                        onClick={(e) => { e.stopPropagation(); setReasoningSheetText(renderMsg.reasoningText || null); }}
-                                        aria-label="查看思考过程"
-                                    >
-                                        <Clock size={13} strokeWidth={1.8} className="chat-reasoning-trigger-icon" />
-                                        <span className="chat-reasoning-trigger-text">{reasoningPreviewLine(renderMsg.reasoningText)}</span>
-                                        <ChevronRight size={14} strokeWidth={1.8} className="chat-reasoning-trigger-icon" />
-                                    </button>
-                                </div>
-                            )}
-                            <div
-                                id={`message-${msg.id}`}
-                                className="chat-msg-wrapper"
-                                data-role={uiRole(msg)}
-                                {...(isEmptyBubble && renderMsg.reasoningText ? { "data-reasoning-empty": "" } : {})}
-                                {...(isConsecutive ? { "data-consecutive": "" } : {})}
-                                {...(activeMessageId === msg.id ? { "data-active": "" } : {})}
-                                {...(highlightMessageId === msg.id ? { "data-highlight": "" } : {})}
-                                {...multiSelectWrapperProps}
-                            >
-                                {isMultiSelectable && (
-                                    <span className="chat-multi-select-check" aria-hidden="true">
-                                        {isMultiSelected && <Check size={14} strokeWidth={2.5} />}
-                                    </span>
-                                )}
-                                {uiRole(msg) === "system" ? (
-                                    <div
-                                        onPointerDown={(e) => { e.stopPropagation(); handleMessagePointerDown(e, msg.id); }}
-                                        onPointerUp={(e) => handleMessagePointerUp(e)}
-                                        onPointerCancel={handleMessagePointerCancel}
-                                        onPointerLeave={handleMessagePointerCancel}
-                                        onPointerMove={(e) => {
-                                            if (startPosRef.current) {
-                                                const dx = Math.abs(e.clientX - startPosRef.current.x);
-                                                const dy = Math.abs(e.clientY - startPosRef.current.y);
-                                                if (dx > 10 || dy > 10) handleMessagePointerCancel();
-                                            }
-                                        }}
-                                        onContextMenu={(e) => { e.preventDefault(); openMessageContextMenu(msg.id, { x: e.clientX, y: e.clientY }); }}
-                                        className={isSystemInstruction
-                                            ? "chat-system-instruction-card relative cursor-pointer"
-                                            : `chat-sys-msg break-all max-w-[90%] relative cursor-pointer${
-                                                // 骰子旁白：等骰子落定再淡入，避免剧透点数
-                                                msg.content.startsWith("🎲 掷出了") && Date.now() - new Date(msg.createdAt).getTime() < 6000
-                                                    ? " dice-aside-reveal"
-                                                    : ""
-                                            }`}
-                                        {...(activeMessageId === msg.id ? { "data-active": "" } : {})}
-                                    >
-                                        {isSystemInstruction ? (
-                                            <SystemInstructionCard content={msg.content} />
-                                        ) : msg.mediaType === "memory_write_request" ? (
-                                            <MemoryWriteRequestCard
-                                                msg={msg}
-                                                onApprove={handleApproveMemoryWrite}
-                                                onIgnore={handleIgnoreMemoryWrite}
-                                            />
-                                        ) : (
-                                            <>
-                                                {msg.mediaType === "poke"
-                                                    ? (() => {
-                                                        const sender = msg.mediaData?.pokeSender || (msg.role === "user" ? "你" : (character?.name || "对方"));
-                                                        const target = msg.mediaData?.pokeTarget || (msg.role === "user" ? (character?.name || "对方") : "你");
-                                                        const displaySender = sender === userIdentity?.name ? "你" : sender;
-                                                        const displayTarget = target === userIdentity?.name ? "你" : target;
-                                                        return `${displaySender} 拍了拍 ${displayTarget}`;
-                                                    })()
-                                                    : formatSysMsgForUI(msg.content, msg)}
-                                            </>
-                                        )}
-                                        {activeMessageId === msg.id && renderSystemContextMenu(msg)}
-                                    </div>
-                                ) : msg.isRetracted ? (
-                                    <div
-                                        onPointerDown={(e) => { e.stopPropagation(); handleMessagePointerDown(e, msg.id); }}
-                                        onPointerUp={(e) => handleMessagePointerUp(e)}
-                                        onPointerCancel={handleMessagePointerCancel}
-                                        onPointerLeave={handleMessagePointerCancel}
-                                        onPointerMove={(e) => {
-                                            if (startPosRef.current) {
-                                                const dx = Math.abs(e.clientX - startPosRef.current.x);
-                                                const dy = Math.abs(e.clientY - startPosRef.current.y);
-                                                if (dx > 10 || dy > 10) handleMessagePointerCancel();
-                                            }
-                                        }}
-                                        onContextMenu={(e) => { e.preventDefault(); openMessageContextMenu(msg.id, { x: e.clientX, y: e.clientY }); }}
-                                        className="chat-sys-msg mx-auto relative cursor-pointer"
-                                        {...(activeMessageId === msg.id ? { "data-active": "" } : {})}
-                                    >
-                                        {msg.role === "user" ? "你" : (character?.name || "对方")}撤回了一条消息
-                                        {activeMessageId === msg.id && renderDeleteOnlyContextMenu(() => handleDeleteMessage(getStoredActionMessageId(msg)), () => startMultiSelectFromMessage(msg))}
-                                    </div>
-                                ) : (
-                                    <>
-                                        {msg.role !== "user" && !isEmptyBubble && (
-                                            isSilentThought ? (
-                                                /* Silent + inner monologue: no avatar, just heart */
-                                                <div
-                                                    onPointerDown={(e) => { e.stopPropagation(); handleMessagePointerDown(e, msg.id); }}
-                                                    onPointerUp={(e) => handleMessagePointerUp(e)}
-                                                    onPointerCancel={handleMessagePointerCancel}
-                                                    onPointerLeave={handleMessagePointerCancel}
-                                                    onPointerMove={(e) => {
-                                                        if (startPosRef.current) {
-                                                            const dx = Math.abs(e.clientX - startPosRef.current.x);
-                                                            const dy = Math.abs(e.clientY - startPosRef.current.y);
-                                                            if (dx > 10 || dy > 10) handleMessagePointerCancel();
-                                                        }
-                                                    }}
-                                                    onContextMenu={(e) => { e.preventDefault(); openMessageContextMenu(msg.id, { x: e.clientX, y: e.clientY }); }}
-                                                    onClick={(e) => {
-                                                        if (activeMessageId === msg.id) return;
-                                                        e.stopPropagation();
-                                                        setExpandedThinkingId(prev => prev === msg.id ? null : msg.id);
-                                                    }}
-                                                    className="chat-monologue-heart flex items-center justify-center shrink-0 w-[40px] h-[24px] relative cursor-pointer"
-                                                    title={session.isGroup ? `${msg.senderName || "群成员"}的折叠状态` : "查看折叠状态"}
-                                                    aria-label={session.isGroup ? `${msg.senderName || "群成员"}的折叠状态` : "查看折叠状态"}
-                                                    {...(activeMessageId === msg.id ? { "data-active": "" } : {})}
-                                                >
-                                                    <span className="chat-monologue-heart ts-18 leading-none inline-block" {...(expandedMonologueId === msg.id ? { "data-active": "" } : {})}><svg viewBox="0 0 16 16" width="18" height="18" style={{display:"block"}}><path d="M8 14s-6-4-6-8c0-2.5 1.5-4 3.5-4 1 0 2 .5 2.5 1.5C8.5 2.5 9.5 2 10.5 2 12.5 2 14 3.5 14 6c0 4-6 8-6 8z" fill="currentColor"/></svg></span>
-                                                    {activeMessageId === msg.id && renderDeleteOnlyContextMenu(() => handleDeleteMessage(getStoredActionMessageId(msg)), () => startMultiSelectFromMessage(msg))}
-                                                </div>
-                                            ) : (
-                                                <div className="chat-msg-avatar flex flex-col items-center gap-1 shrink-0">
-                                                    {(() => {
-                                                        const senderChar = session.isGroup && msg.senderCharacterId
-                                                            ? groupCharMap.get(msg.senderCharacterId) || character
-                                                            : character;
-                                                        return (
-                                                            <>
-                                                    <div onDoubleClick={() => {
-                                                        const targetChar = session.isGroup && msg.senderCharacterId
-                                                            ? groupCharMap.get(msg.senderCharacterId) || character
-                                                            : character;
-                                                        if (targetChar) sendRichMessage("poke", { pokeTarget: targetChar.name });
-                                                    }} className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden cursor-pointer">
-                                                        {chatAvatarImg(senderChar?.id, "w-full h-full object-cover")}
-                                                    </div>
-                                                            </>
-                                                        );
-                                                    })()}
-                                                </div>
-                                            )
-                                        )}
-                                        {!isSilentThought && !isEmptyBubble && <div
-                                            className={`chat-msg-content-wrap flex flex-col min-w-0 max-w-[70%] ${isStandaloneHtmlPreview ? "chat-msg-content-wrap-html" : ""}`}
-                                            {...(isStandaloneHtmlPreview ? { "data-html": "true" } : {})}
-                                        >
-                                            {session.isGroup && msg.role !== "user" && (
-                                                <span className="chat-group-sender-name">{msg.senderName || ""}{renderGroupRoleBadge(msg.senderCharacterId)}</span>
-                                            )}
-                                            {/* 气泡 + 已读回执同行排列：回执贴在气泡外侧底部，不占气泡内部空间 */}
-                                            <div className="chat-bubble-receipt-row" data-side={msg.role === "user" ? "user" : "assistant"}>
-                                            {showReadReceipt && !isStandaloneHtmlPreview && msg.role === "user" && (
-                                                <span
-                                                    className={`chat-read-receipt${msg.status === "read" ? " is-read" : ""}`}
-                                                    aria-label={msg.status === "read" ? "已读" : "未读"}
-                                                >
-                                                    {msg.status === "read" ? "已读" : "未读"}
-                                                </span>
-                                            )}
-                                            <div
-                                            {...(editingMessageId !== msg.id ? {
-                                                onPointerDown: (e: React.PointerEvent) => { e.stopPropagation(); handleMessagePointerDown(e, msg.id); },
-                                                onPointerUp: (e: React.PointerEvent) => handleMessagePointerUp(e),
-                                                onPointerCancel: handleMessagePointerCancel,
-                                                onPointerLeave: handleMessagePointerCancel,
-                                                onPointerMove: (e: React.PointerEvent) => {
-                                                    if (startPosRef.current) {
-                                                        const dx = Math.abs(e.clientX - startPosRef.current.x);
-                                                        const dy = Math.abs(e.clientY - startPosRef.current.y);
-                                                        if (dx > 10 || dy > 10) handleMessagePointerCancel();
-                                                    }
-                                                },
-                                                onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); openMessageContextMenu(msg.id, { x: e.clientX, y: e.clientY }); },
-                                            } : {})}
-                                            className={`chat-bubble-role-${msg.role} ${isMediaBubble ? "chat-bubble-media" : ""} ${isStandaloneHtmlPreview ? "chat-bubble-html-preview" : ""} ${renderMsg.mediaType === "music_share" ? "chat-bubble-music-share" : ""} ${renderMsg.mediaType === "gift" || renderMsg.mediaType === "image" || isStandaloneHtmlPreview ? "rounded-none" : "rounded-md"} break-words relative cursor-pointer select-none`}
-                                            style={isStandaloneHtmlPreview ? STANDALONE_CARD_BUBBLE_STYLE : undefined}
-                                            data-ui={msg.role === "user" ? "bubble-user" : "bubble-bot"}
-                                            data-msg-id={msg.id}
-                                            {...(activeMessageId === msg.id ? { "data-active": "" } : {})}
-                                            >
-                                            {/* Message Actions Popup */}
-                                            {activeMessageId === msg.id && renderBubbleContextMenu(msg)}
-
-                                            <MessageBubble
-                                                msg={renderMsg}
-                                                displayContent={msg.displayProjected ? undefined : bubbleDisplayContent}
-                                                charName={character?.name}
-                                                userName={userIdentity?.name || "你"}
-                                                groupSize={session.isGroup ? (session.participantIds?.length || 0) + (session.isSpectator ? 0 : 1) : undefined}
-                                                onShowDetail={setMediaDetailMsg}
-                                                characterId={msg.senderCharacterId || session.contactId}
-                                                onUpdate={(updated) => setMessages(prev => prev.map(m => m.id === updated.id ? updated : m))}
-                                                onSystemMessage={(text) => {
-                                                    const sysMsg = pushChatMessage({
-                                                        sessionId: session.id,
-                                                        role: "system",
-                                                        content: text,
-                                                    });
-                                                    setMessages(prev => [...prev, sysMsg]);
-                                                }}
-                                                onMusicPlay={handleMusicCardPlay}
-                                                onActionSelect={(text) => chatTextInputRef.current?.appendText(text)}
-                                                defaultTranslationExpanded={session.collapseBilingualTranslation !== false ? false : true}
-                                            />
-                                        </div>
-                                        {showReadReceipt && !isStandaloneHtmlPreview && msg.role !== "user" && (
-                                            <span
-                                                className={`chat-read-receipt${msg.status === "read" ? " is-read" : ""}`}
-                                                aria-label={msg.status === "read" ? "已读" : "未读"}
-                                            >
-                                                {msg.status === "read" ? "已读" : "未读"}
-                                            </span>
-                                        )}
-                                        </div>
-                                        </div>}
-                                        {showBlockedBadge && (
-                                            <div
-                                                className="self-center shrink-0 w-[18px] h-[18px] rounded-full flex items-center justify-center"
-                                                style={{ background: "#F43530" }}
-                                                title="对方已被你拉黑，消息被拒收"
-                                                aria-label="对方已被你拉黑，消息被拒收"
-                                            >
-                                                <svg viewBox="0 0 16 16" width="12" height="12" style={{ display: "block" }} aria-hidden="true">
-                                                    <rect x="7.1" y="2.6" width="1.8" height="6.2" rx="0.9" fill="#fff" />
-                                                    <circle cx="8" cy="12.2" r="1.15" fill="#fff" />
-                                                </svg>
-                                            </div>
-                                        )}
-                                        {msg.role !== "user" && !isSilentThought && !isEmptyBubble && hasFoldedPanel && (
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); setExpandedThinkingId(prev => prev === msg.id ? null : msg.id); }}
-                                                className="chat-monologue-heart bg-none border-none cursor-pointer p-1 ts-14 leading-none self-end shrink-0 -ml-2"
-                                                {...(expandedMonologueId === msg.id ? { "data-active": "" } : {})}
-                                                title="查看折叠状态"
-                                                aria-label="查看折叠状态"
-                                            >
-                                                <svg viewBox="0 0 16 16" width="14" height="14" style={{display:"block"}}>
-                                                    <path d="M8 14s-6-4-6-8c0-2.5 1.5-4 3.5-4 1 0 2 .5 2.5 1.5C8.5 2.5 9.5 2 10.5 2 12.5 2 14 3.5 14 6c0 4-6 8-6 8z" fill="currentColor"/>
-                                                </svg>
-                                            </button>
-                                        )}
-                                        {msg.role === "user" && !isEmptyBubble && (
-                                            <div className="chat-msg-avatar w-[40px] h-[40px] rounded-[20px] bg-[var(--c-page-body-bg)] shrink-0 flex items-center justify-center overflow-hidden">
-                                                {userIdentity?.avatarUrl ? (
-                                                    <img src={userIdentity.avatarUrl} alt="Me" className="w-full h-full object-cover rounded-[20px]" />
-                                                ) : (
-                                                    <User size={20} color="var(--c-text)" />
-                                                )}
-                                            </div>
-                                        )}
-                                    </>
-                                )}
-                            </div>
-                            {/* Voice message: text transcription bubble */}
-                            {renderMsg.mediaType === "audio" && voiceTextIds.has(msg.id) && renderMsg.mediaData?.label && (
-                                <div className={`chat-msg-wrapper`} data-role={uiRole(msg)} style={{ marginTop: -12 }}>
-                                    {msg.role !== "user" && <div className="w-[40px] shrink-0" />}
-                                    <div className="voice-msg-text-bubble">
-                                        <BilingualTextBlock
-                                            text={msg.displayProjected ? (renderMsg.mediaData?.label || "") : renderDisplayText(renderMsg.mediaData?.label || "", msg.role === "user" ? 1 : 2, false)}
-                                            mode="markdown"
-                                            defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
-                                        />
-                                    </div>
-                                    {msg.role === "user" && <div className="w-[40px] shrink-0" />}
-                                </div>
-                            )}
-                            {/* 状态栏：一律裸渲染，不套便利贴外框（自定义模式下交给用户的渲染代码，
-                                否则 [状态栏] 原文直接走 markdown/内联 HTML，让 AI 直出的卡片自己当外框）。
-                                状态值跟内心独白走（留在便利贴里）；这轮没有内心独白时便利贴不出现，
-                                数值裸放在状态栏上方。 */}
-                            {hasFoldedPanel && expandedMonologueId === msg.id
-                                && (renderMsg.statusPanel || (!renderMsg.innerMonologue && cardStateValues && cardStateValues.length > 0)) && (
-                                <div className="chat-status-bare">
-                                    {!renderMsg.innerMonologue && cardStateValues && cardStateValues.length > 0 && (
-                                        <StateValuesPanel stateValues={cardStateValues} />
-                                    )}
-                                    {renderMsg.statusPanel && (
-                                        msg.statusRegionMode === "custom" && statusRegionCfg.renderHtml.trim() ? (
-                                            <CustomStatusFrame html={statusRegionCfg.renderHtml} raw={renderMsg.statusPanel} />
-                                        ) : (
-                                            <BilingualTextBlock text={msg.displayProjected ? renderMsg.statusPanel : renderDisplayText(renderMsg.statusPanel, 6, false)} mode="markdown" defaultExpanded={session.collapseBilingualTranslation !== false ? false : true} />
-                                        )
-                                    )}
-                                </div>
-                            )}
-                            {/* Inner monologue card (sticky note / journal style) */}
-                            {hasFoldedPanel && expandedMonologueId === msg.id && renderMsg.innerMonologue && (
-                                <div className="chat-thought-card">
-                                    {/* Decorative washi tape */}
-                                    <div className="chat-thought-tape-left" />
-                                    <div className="chat-thought-tape-right" />
-                                    {/* Title */}
-                                    <div className="chat-thought-title">
-                                        💭 内心独白
-                                    </div>
-                                    {/* State values panel */}
-                                    {cardStateValues && cardStateValues.length > 0 && (
-                                        <StateValuesPanel stateValues={cardStateValues} />
-                                    )}
-                                    <div className="chat-thought-body">
-                                        <BilingualTextBlock text={msg.displayProjected ? renderMsg.innerMonologue : renderDisplayText(renderMsg.innerMonologue, 6, false)} mode="markdown" defaultExpanded={session.collapseBilingualTranslation !== false ? false : true} />
-                                    </div>
-                                    {/* Signature */}
-                                    <div className="chat-thought-sig">
-                                        — {session.isGroup ? (msg.senderName || "群成员") : (character?.name || "TA")}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    );
-                })}
-                {/* 流式生成预览：生成中实时显示原文增量，结束后由正式消息替换 */}
-                {!offlineMode && streamPreview && (
-                    <div className="chat-stream-preview" data-ui="stream-preview">
-                        {session.isGroup && streamPreview.parts && streamPreview.parts.length > 0 ? (
-                            /* 按空行定型：写完的段落立即成为独立气泡（与最终拆条同规则），只有最后一段带光标打字 */
-                            streamPreview.parts.map((part, i) => {
-                                const senderChar = groupCharMap.get(part.characterId) || character;
-                                const isLastPart = i === (streamPreview.parts?.length ?? 0) - 1;
-                                return part.texts.map((segText, j) => {
-                                    const isTyping = isLastPart && j === part.texts.length - 1;
-                                    return (
-                                        <div key={`stream-${part.characterId}-${i}-${j}`} className="chat-msg-wrapper" data-role="assistant">
-                                            <div className="chat-msg-avatar flex flex-col items-center gap-1 shrink-0">
-                                                <div className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden">
-                                                    {chatAvatarImg(senderChar?.id, "w-full h-full object-cover")}
-                                                </div>
-                                            </div>
-                                            <div className="chat-msg-content-wrap flex flex-col min-w-0 max-w-[70%]">
-                                                <span className="chat-group-sender-name">{part.characterName}</span>
-                                                <div className="chat-bubble-role-assistant chat-stream-bubble break-words rounded-md px-3 py-2">
-                                                    {/* 流式预览用轻量 pre-wrap 渲染：避免每帧跑 markdown/双语解析导致闪烁卡顿 */}
-                                                    <div className="chat-stream-text whitespace-pre-wrap break-words">{segText}</div>
-                                                    {isTyping && <span className="chat-stream-cursor" aria-hidden="true" />}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                });
-                            })
-                        ) : streamPreview.texts && streamPreview.texts.length > 0 ? (
-                            streamPreview.texts.map((segText, j) => {
-                                const isTyping = j === (streamPreview.texts?.length ?? 0) - 1;
-                                return (
-                                    <div key={`stream-seg-${j}`} className="chat-msg-wrapper" data-role="assistant">
-                                        <div className="chat-msg-avatar flex flex-col items-center gap-1 shrink-0">
-                                            <div className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden">
-                                                {chatAvatarImg(character?.id, "w-full h-full object-cover")}
-                                            </div>
-                                        </div>
-                                        <div className="chat-msg-content-wrap flex flex-col min-w-0 max-w-[70%]">
-                                            <div className="chat-bubble-role-assistant chat-stream-bubble break-words rounded-md px-3 py-2">
-                                                {/* 流式预览用轻量 pre-wrap 渲染：避免每帧跑 markdown/双语解析导致闪烁卡顿 */}
-                                                <div className="chat-stream-text whitespace-pre-wrap break-words">{segText}</div>
-                                                {isTyping && <span className="chat-stream-cursor" aria-hidden="true" />}
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })
-                        ) : null}
-                    </div>
-                )}
+                <ChatMessageList ctxRef={msgListCtxRef} version={msgListVersion} />
                 {/* Scroll anchor: browser keeps this in view when content above changes height */}
                 <div style={{ overflowAnchor: 'auto', height: 1 }} />
             </div>
