@@ -4,6 +4,10 @@ export type SettingItemMeta = {
     description?: string;
     createdAt: number;
     updatedAt: number;
+    /** 所属文件夹 id（世界书等在设置页可分组收纳）；空为「未分类」 */
+    folderId?: string;
+    /** 置顶：在设置列表和各选择框里排在最前 */
+    pinned?: boolean;
 };
 
 // --- WorldBook ---
@@ -153,6 +157,18 @@ export type ApiConfig = {
     enableImageRecognition: boolean;
     enableImageGeneration: boolean;
     preventEmptyGenerateRambling?: boolean;
+    /** 所属文件夹 id（见 lib/api-folder-storage.ts）；空为「未分类」。 */
+    folderId?: string;
+    /** 置顶：在设置列表和各选择框里排在最前 */
+    pinned?: boolean;
+};
+
+/** API 配置文件夹（分类收纳用）。 */
+export type ApiFolder = {
+    id: string;
+    name: string;
+    /** 排序权重，越小越靠前。 */
+    order: number;
 };
 
 // --- VoiceApiConfig (migrated from voice-settings.tsx) ---
@@ -308,6 +324,8 @@ export type BindingConfig = {
     /** App-level defaults shared by every character; character app overrides still win. */
     appDefaults?: Partial<Record<string, BindingSlot>>;
     characterBindings: CharacterBinding[];
+    /** 聊天信息页单独给角色指定的 API：最高优先级，压过角色默认（含配置方案套用的）和应用级覆盖 */
+    characterApiOverrides?: Record<string, string>;
     /** Auxiliary API: used for memory summarization (global, not per-character) */
     memorySummaryApiConfigId?: string;
     /** Auxiliary API: used for embedding/vector recall (global, not per-character) */

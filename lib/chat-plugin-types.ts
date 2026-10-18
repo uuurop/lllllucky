@@ -99,6 +99,12 @@ export type LlmRequestPayload = {
     /** 请求用途：appId（"chat" 单聊等）；群聊等场景可结合 sessionId 自查 session.isGroup */
     purpose: string;
     sessionId?: string;
+    /** 替哪个角色生成（宿主知道时填）：插件 hook 据此判断权限，比如日历谁能看 */
+    characterId?: string;
+    /** 应用标签（如 ["story", "story_extra"]）：hook 按标签决定要不要注入 */
+    appTags?: string[];
+    /** 预览模式：提示词查看器跑一遍 hook 拿和内容一致的提示词，hook 只加内容、不记账不排队 */
+    preview?: boolean;
     /** 采样参数改写（留空则用用户配置；仅在该次请求带预设时生效） */
     temperature?: number;
     maxTokens?: number;

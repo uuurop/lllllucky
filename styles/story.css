@@ -1,4 +1,3 @@
-/* ═══ Story Mode Styles ═══ */
 /* Extracted from story-app.tsx inline styles */
 
         /* === 剧情页面专用色 (Scrapbook / Minimalist Aesthetic) === */
@@ -17,8 +16,9 @@
             0 14px 30px rgba(0, 0, 0, 0.016);
           /* 文字颜色：柔和的深灰/铅笔色，比纯黑更有质感 */
           color: var(--c-story-text, #3a3b3c);
-          /* 背景：纯白（其他主题通过变量覆盖） */
+          /* 背景：纯白（其他主题通过变量覆盖）；侧栏里换了剧情背景就铺在最上层（--story-wallpaper，自定义 CSS 也能用） */
           background:
+            var(--story-wallpaper, none) center center / cover no-repeat,
             linear-gradient(160deg, var(--c-story-bg-top, #ffffff) 0%, var(--c-story-bg-mid, #ffffff) 60%, var(--c-story-bg-bottom, #ffffff) 100%);
           /* 书籍阅读感：宋体衬线字体，UI 全局统一 */
           --story-font: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", Georgia, serif;
@@ -114,7 +114,6 @@
           transform: scale(0.92);
           opacity: 0.85;
         }
-        [data-story-theme="night"] .story-character-chip,
         [data-story-theme="night"] .story-load-more-btn,
         [data-story-theme="night"] .story-bubble {
           box-shadow: none;
@@ -160,48 +159,6 @@
           text-transform: uppercase;
           color: var(--c-story-sub, rgba(148, 163, 184, 0.8));
           margin-bottom: 12px;
-          font-weight: 600;
-        }
-        /* 角色选择：一行三个，圆形头像 + 下方小字姓名 */
-        .story-character-list {
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 16px 8px;
-          overflow: hidden;
-        }
-        .story-character-chip {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 7px;
-          padding: 4px 2px;
-          border-radius: 0;
-          overflow: hidden;
-          max-width: 100%;
-          box-sizing: border-box;
-          border: none;
-          background: transparent;
-          box-shadow: none;
-          transition: all 0.2s;
-        }
-        .story-app-shell .story-character-chip .ui-avatar {
-          border-radius: 999px;
-          box-shadow: var(--story-paper-shadow-soft);
-        }
-        .story-character-chip[data-active="true"] .ui-avatar {
-          box-shadow: 0 0 0 2px var(--c-story-heading, #1e293b);
-        }
-        .story-character-name {
-          max-width: 100%;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-          font-size: calc(10px*var(--app-text-scale,1));
-          color: var(--c-story-sub, #94a3b8);
-          line-height: 1.3;
-        }
-        .story-character-chip[data-active="true"] .story-character-name {
-          color: var(--c-story-heading, #1e293b);
           font-weight: 600;
         }
         .story-tool-btn {
@@ -279,6 +236,12 @@
           padding: calc(var(--page-header-safe-top, 48px) + var(--page-header-content-height, 42px) + 36px) 22px 150px;
         }
         
+        /* 侧栏关掉「纸张显示」：这张纸变透明，露出背景。只有一个 class 的权重，自定义 CSS 想怎么画都盖得住 */
+        :where(.story-app-shell[data-paper="off"]) .story-stage-inner {
+          background: transparent;
+          box-shadow: none;
+        }
+
         /* 顶部信息阅读区：与正文同处一张长卡片，不再是独立卡片 */
         .story-meta {
           position: relative;
@@ -367,6 +330,29 @@
           font-style: italic;
           padding-left: 10px;
           border-left: 2px solid var(--c-story-accent-light, #e2e8f0);
+        }
+        /* 引言点一下就地编辑 */
+        .story-meta-desc[role="button"] {
+          cursor: text;
+          white-space: pre-wrap;
+        }
+        .story-meta-desc-input {
+          display: block;
+          width: 100%;
+          box-sizing: border-box;
+          margin-bottom: 0;
+          padding-top: 4px;
+          padding-bottom: 4px;
+          padding-right: 8px;
+          border-top: none;
+          border-right: none;
+          border-bottom: none;
+          border-radius: 0;
+          outline: none;
+          resize: none;
+          background: var(--c-story-css-box-bg, rgba(255, 251, 246, 0.88));
+          -webkit-user-select: text;
+          user-select: text;
         }
 
         .story-empty {
@@ -519,8 +505,13 @@
         .story-row[data-role="system"] {
           justify-content: center;
         }
+        /* 系统消息（系统指令卡片、出错提示）居中、最宽 500px。
+           这一行是上下排列的，原来写的 flex: 0 1 500px 实际变成了「高 500px」，每条下面都空出一大块 */
         .story-row[data-role="system"] .story-bubble-wrap {
-          flex: 0 1 500px;
+          flex: 0 0 auto;
+          align-self: center;
+          width: 100%;
+          max-width: 500px;
         }
         .story-row[data-role="system"] .story-bubble {
           background: transparent;
@@ -592,6 +583,12 @@
         }
         .story-composer:focus-within textarea {
           background: var(--c-story-input-inner-focus, rgba(248, 250, 252, 0.94));
+        }
+        /* 空着时提示文字只占一行，太长就省略（左边按钮多了输入框会变窄） */
+        .story-composer textarea:placeholder-shown {
+          overflow: hidden;
+          white-space: nowrap;
+          text-overflow: ellipsis;
         }
         .story-composer textarea::placeholder {
           /* 占位提示：字号更小、颜色更浅 */
@@ -987,6 +984,39 @@
         .story-ctx-btn-danger {
           color: var(--c-danger, #e74c3c);
         }
+        /* 收藏「自己选取」：只有这一条能选字，虚线框标出来 */
+        .story-row.is-selecting,
+        .story-row.is-selecting .story-richtext {
+          -webkit-user-select: text;
+          user-select: text;
+          -webkit-touch-callout: default;
+        }
+        .story-row.is-selecting .story-bubble {
+          outline: 1px dashed var(--c-story-sub, #94a3b8);
+          outline-offset: 6px;
+        }
+        /* 选字时的收藏条：和长按菜单同一个样子，钉在离选区远的那一头 */
+        .story-select-bar {
+          position: fixed;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 50;
+          display: flex;
+          align-items: center;
+          padding: 4px 0;
+          background: var(--ctx-menu-bg, #2c2c2c);
+          box-shadow:
+            0 2px 8px rgba(0, 0, 0, 0.12),
+            0 10px 26px rgba(0, 0, 0, 0.08);
+          white-space: nowrap;
+        }
+        .story-select-hint {
+          color: rgba(255, 255, 255, 0.72);
+          font-size: calc(13px*var(--app-text-scale,1));
+          padding: 0 12px;
+          line-height: 36px;
+          border-right: 1px solid rgba(255,255,255,0.1);
+        }
         .story-ctx-triangle {
           display: none;
           position: absolute;
@@ -1024,3 +1054,1215 @@
         }
         .story-inline-edit-btn-save { color: var(--c-story-accent, #7c6844); font-weight: 500; }
         .story-inline-edit-btn:disabled { opacity: 0.4; cursor: default; }
+
+        /* === 侧栏方案 C：正在阅读 / 最近 / 全部角色 === */
+        .story-now-card {
+          display: grid;
+          grid-template-columns: 46px minmax(0, 1fr);
+          gap: 12px;
+          align-items: center;
+          padding: 14px 12px;
+          background: var(--c-story-panel, rgba(255, 255, 255, 0.5));
+          box-shadow: var(--story-paper-shadow-soft);
+        }
+        .story-app-shell .story-now-card .ui-avatar {
+          width: 46px !important;
+          height: 46px !important;
+          font-size: 18px !important;
+          border-radius: 999px;
+        }
+        .story-now-copy {
+          min-width: 0;
+        }
+        .story-now-title {
+          font-size: calc(15px*var(--app-text-scale,1));
+          font-weight: 600;
+          color: var(--c-story-heading, #1e293b);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .story-now-sub {
+          margin-top: 3px;
+          font-size: calc(11px*var(--app-text-scale,1));
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-mode-switch {
+          grid-column: 1 / -1;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          margin-top: 4px;
+          border: 1px solid var(--c-story-heading, #1e293b);
+        }
+        .story-mode-switch button {
+          border: none;
+          border-radius: 0;
+          background: transparent;
+          padding: 7px 0;
+          font: inherit;
+          font-size: calc(12px*var(--app-text-scale,1));
+          letter-spacing: 0.1em;
+          color: var(--c-story-heading, #1e293b);
+        }
+        .story-mode-switch button[data-active="true"] {
+          background: var(--c-story-heading, #1e293b);
+          color: var(--c-story-on-heading, var(--c-story-drawer-top, #ffffff));
+        }
+        .story-recent-grid {
+          display: grid;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          gap: 6px;
+        }
+        .story-recent-item {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 6px;
+          min-width: 0;
+          padding: 0;
+          border: none;
+          border-radius: 0;
+          background: transparent;
+          font: inherit;
+        }
+        .story-app-shell .story-recent-item .ui-avatar {
+          width: 38px !important;
+          height: 38px !important;
+          font-size: 15px !important;
+          border-radius: 999px;
+          box-shadow: var(--story-paper-shadow-soft);
+        }
+        .story-recent-item span {
+          max-width: 100%;
+          font-size: calc(10px*var(--app-text-scale,1));
+          color: var(--c-story-sub, #94a3b8);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .story-all-btn {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          width: 100%;
+          margin-top: 12px;
+          padding: 11px 12px;
+          border: none;
+          border-radius: 0;
+          border-top: 1px solid var(--c-story-drawer-border, rgba(124, 104, 68, 0.08));
+          border-bottom: 1px solid var(--c-story-drawer-border, rgba(124, 104, 68, 0.08));
+          background: transparent;
+          font: inherit;
+          font-size: calc(13px*var(--app-text-scale,1));
+          color: var(--c-story-text, #3a3b3c);
+        }
+        .story-all-btn span:last-child {
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-drawer-note {
+          margin-top: 10px;
+          font-size: calc(11px*var(--app-text-scale,1));
+          line-height: 1.7;
+          color: var(--c-story-sub, #94a3b8);
+        }
+
+        /* 侧栏里再盖一层：全部角色 / 番外绑定的选项，和侧栏同位置同宽 */
+        .story-drawer-sheet {
+          position: absolute;
+          top: 0;
+          right: 0;
+          bottom: 0;
+          width: min(320px, 85vw);
+          z-index: 12;
+          display: flex;
+          flex-direction: column;
+          /* 侧栏底色是半透明的；这层盖在侧栏上，垫一层实色免得下面的字透出来。
+             自定义主题把 bg-top 设成透明时，再靠模糊把下面的字糊掉 */
+          background:
+            linear-gradient(180deg, var(--c-story-drawer-top, rgba(253, 253, 254, 0.98)), var(--c-story-drawer-bottom, rgba(248, 249, 250, 0.98))),
+            var(--c-story-bg-top, #ffffff);
+          -webkit-backdrop-filter: blur(20px);
+          backdrop-filter: blur(20px);
+          box-shadow:
+            -2px 0 8px rgba(0, 0, 0, 0.04),
+            -14px 0 32px rgba(0, 0, 0, 0.03);
+        }
+        .story-sheet-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 54px 20px 12px;
+        }
+        .story-sheet-title {
+          font-size: calc(13px*var(--app-text-scale,1));
+          letter-spacing: 0.15em;
+          color: var(--c-story-sub, #94a3b8);
+          font-weight: 600;
+        }
+        .story-sheet-body {
+          flex: 1;
+          min-height: 0;
+          display: flex;
+          flex-direction: column;
+          padding: 0 20px;
+        }
+        .story-sheet-scroll {
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
+          padding-bottom: 24px;
+          overscroll-behavior: contain;
+        }
+        .story-search {
+          position: relative;
+          margin-bottom: 10px;
+        }
+        .story-search svg {
+          position: absolute;
+          left: 10px;
+          top: 50%;
+          transform: translateY(-50%);
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-search input {
+          width: 100%;
+          box-sizing: border-box;
+          padding: 8px 12px 8px 30px;
+          border: none;
+          border-radius: 0;
+          outline: none;
+          background: var(--c-story-css-box-bg, rgba(255, 251, 246, 0.88));
+          box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06);
+          color: var(--c-story-text, #4b4335);
+          font: inherit;
+          font-size: calc(13px*var(--app-text-scale,1));
+          -webkit-user-select: text;
+          user-select: text;
+        }
+        .story-sheet-index {
+          padding: 12px 0 4px;
+          font-size: calc(10px*var(--app-text-scale,1));
+          letter-spacing: 0.2em;
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-sheet-empty {
+          padding: 24px 0;
+          text-align: center;
+          font-size: calc(12px*var(--app-text-scale,1));
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-character-row {
+          display: grid;
+          grid-template-columns: 32px minmax(0, 1fr) auto;
+          gap: 10px;
+          align-items: center;
+          width: 100%;
+          padding: 9px 10px 9px 8px;
+          border: none;
+          border-radius: 0;
+          border-left: 2px solid transparent;
+          background: transparent;
+          font: inherit;
+          text-align: left;
+        }
+        .story-character-row + .story-character-row {
+          border-top: 1px solid var(--c-story-drawer-border, rgba(124, 104, 68, 0.08));
+        }
+        .story-character-row[data-active="true"] {
+          border-left-color: var(--c-story-heading, #1e293b);
+          background: var(--c-story-panel-active, rgba(148, 163, 184, 0.10));
+        }
+        .story-app-shell .story-character-row .ui-avatar {
+          width: 32px !important;
+          height: 32px !important;
+          font-size: 13px !important;
+          border-radius: 999px;
+          box-shadow: var(--story-paper-shadow-soft);
+        }
+        .story-character-row-main {
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .story-character-row-name {
+          font-size: calc(14px*var(--app-text-scale,1));
+          color: var(--c-story-heading, #1e293b);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .story-character-row[data-active="true"] .story-character-row-name {
+          font-weight: 600;
+        }
+        .story-character-row-line {
+          font-size: calc(11px*var(--app-text-scale,1));
+          color: var(--c-story-sub, #94a3b8);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .story-character-row-date {
+          align-self: start;
+          padding-top: 3px;
+          font-size: calc(10px*var(--app-text-scale,1));
+          color: var(--c-story-sub, #94a3b8);
+        }
+
+        /* === 番外：绑定、方案 === */
+        .story-bind-row {
+          display: grid;
+          grid-template-columns: 64px minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          padding: 11px 2px;
+          border: none;
+          border-radius: 0;
+          border-bottom: 1px solid var(--c-story-drawer-border, rgba(124, 104, 68, 0.08));
+          background: transparent;
+          font: inherit;
+          font-size: calc(13px*var(--app-text-scale,1));
+          text-align: left;
+        }
+        .story-bind-row span:first-child {
+          font-size: calc(12px*var(--app-text-scale,1));
+          letter-spacing: 0.1em;
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-bind-row span:nth-child(2) {
+          color: var(--c-story-text, #3a3b3c);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .story-bind-row span:last-child,
+        .story-bind-row span[data-follow="true"] {
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-option-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          width: 100%;
+          padding: 12px 2px;
+          border: none;
+          border-radius: 0;
+          border-bottom: 1px solid var(--c-story-drawer-border, rgba(124, 104, 68, 0.08));
+          background: transparent;
+          font: inherit;
+          font-size: calc(13px*var(--app-text-scale,1));
+          color: var(--c-story-text, #3a3b3c);
+          text-align: left;
+        }
+        .story-option-row span {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .story-option-row[data-active="true"] {
+          color: var(--c-story-heading, #1e293b);
+          font-weight: 600;
+        }
+        .story-option-row svg {
+          flex-shrink: 0;
+        }
+        /* 世界书文件夹：外层是文件夹行，点进去是里面的世界书 */
+        .story-option-folder-name {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .story-option-folder-meta {
+          flex-shrink: 0;
+          display: inline-flex;
+          align-items: center;
+          gap: 2px;
+          font-size: calc(11px*var(--app-text-scale,1));
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-preset-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .story-preset-row + .story-preset-row {
+          margin-top: 8px;
+        }
+        .story-preset-select,
+        .story-preset-input {
+          flex: 1;
+          min-width: 0;
+          height: 38px;
+          box-sizing: border-box;
+          padding: 0 12px;
+          border: none;
+          border-radius: 0;
+          outline: none;
+          background: var(--c-story-css-box-bg, rgba(255, 251, 246, 0.88));
+          box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06);
+          color: var(--c-story-text, #3a3b3c);
+          font: inherit;
+          font-size: calc(13px*var(--app-text-scale,1));
+          -webkit-appearance: none;
+          appearance: none;
+          -webkit-user-select: text;
+          user-select: text;
+        }
+        .story-preset-btn {
+          flex: 0 0 auto;
+          width: 38px;
+          height: 38px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border: none;
+          border-radius: 0;
+          background: var(--c-story-panel, rgba(255, 255, 255, 0.5));
+          box-shadow: var(--story-paper-shadow-soft);
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-preset-btn.is-danger {
+          color: var(--c-danger, #e74c3c);
+        }
+        .story-tool-btn + .story-tool-btn {
+          margin-top: 10px;
+        }
+        .story-tool-btn.is-danger {
+          color: var(--c-danger, #e74c3c);
+        }
+
+        /* === 找回剧情 === */
+        .story-recover-card {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding: 12px 14px;
+          margin-bottom: 12px;
+          background: var(--c-story-panel, rgba(255, 255, 255, 0.5));
+          box-shadow: var(--story-paper-shadow-soft);
+        }
+        .story-recover-meta {
+          font-size: calc(11px*var(--app-text-scale,1));
+          letter-spacing: 0.08em;
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-recover-line {
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+          font-size: calc(12px*var(--app-text-scale,1));
+          line-height: 1.6;
+          color: var(--c-story-text, #3a3b3c);
+        }
+        .story-recover-line span {
+          margin-right: 6px;
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-recover-pick {
+          display: grid;
+          grid-template-columns: 32px minmax(0, 1fr) auto;
+          gap: 10px;
+          align-items: center;
+          width: 100%;
+          min-height: 48px;
+          padding: 8px 10px 8px 8px;
+          border: none;
+          border-radius: 0;
+          background: var(--c-story-css-box-bg, rgba(255, 251, 246, 0.88));
+          box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06);
+          color: var(--c-story-text, #4b4335);
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+        }
+        .story-recover-pick > svg {
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-recover-pick-empty {
+          grid-column: 1 / 3;
+          padding-left: 2px;
+          font-size: calc(13px*var(--app-text-scale,1));
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-recover-card .story-mode-switch {
+          margin-top: 0;
+        }
+        .story-recover-note {
+          font-size: calc(11px*var(--app-text-scale,1));
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-recover-card .story-tool-btn {
+          padding: 9px 0;
+        }
+        .story-recover-card .story-tool-btn:disabled {
+          opacity: 0.5;
+          cursor: default;
+        }
+
+        /* === 番外：指令卡 === */
+        .story-extra-order {
+          padding: 12px 14px;
+          background: var(--c-story-panel, rgba(255, 255, 255, 0.5));
+          box-shadow: var(--story-paper-shadow-soft);
+        }
+        .story-extra-order-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          width: 100%;
+          padding: 0;
+          border: none;
+          background: transparent;
+          font: inherit;
+          font-size: calc(12px*var(--app-text-scale,1));
+          letter-spacing: 0.12em;
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-extra-order-text {
+          margin-top: 8px;
+          font-size: calc(13px*var(--app-text-scale,1));
+          line-height: 1.75;
+          color: var(--c-story-text, #3a3b3c);
+          white-space: pre-wrap;
+          word-break: break-word;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+        .story-extra-order-text.is-open {
+          display: block;
+          -webkit-line-clamp: unset;
+          overflow: visible;
+        }
+        .story-extra-chips {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          margin-top: 10px;
+        }
+        .story-extra-chips span {
+          padding: 3px 8px;
+          font-size: calc(10.5px*var(--app-text-scale,1));
+          color: var(--c-story-sub, #64748b);
+          background: var(--c-story-css-box-bg, rgba(255, 251, 246, 0.88));
+          box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+        }
+
+        /* === 番外：输入栏左边的「模板」，和「指令」关着时一个样子：透明底 + 细边 === */
+        .story-template-btn {
+          flex: 0 0 auto;
+          height: 36px;
+          padding: 0 12px;
+          border: none;
+          border-radius: 0;
+          background: transparent;
+          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-story-sub, #64748b) 45%, transparent);
+          color: var(--c-story-sub, #64748b);
+          font: inherit;
+          font-size: calc(12px*var(--app-text-scale,1));
+          letter-spacing: 0.1em;
+        }
+
+        /* === 侧栏「显示选项」：剧情背景一行，右边「更换」「清除」 === */
+        .story-bg-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 10px 0;
+          border-bottom: 1px solid var(--c-story-drawer-border, rgba(124, 104, 68, 0.08));
+        }
+        .story-bg-row-label {
+          font-size: calc(13px*var(--app-text-scale,1));
+          color: var(--c-story-sub, rgba(95, 82, 61, 0.72));
+        }
+        .story-bg-row-actions {
+          display: inline-flex;
+          align-items: center;
+          gap: 14px;
+        }
+        /* 「纸张显示」开关：借番外模板开关的样子，只留右边那个小开关（自定义 CSS 给开关配的色照样生效） */
+        .story-bg-row .story-bg-row-switch {
+          width: auto;
+          padding: 0;
+          background: none;
+          box-shadow: none;
+        }
+        /* 文字颜色：现在用的颜色点 */
+        .story-bg-row-swatch {
+          display: inline-block;
+          width: 16px;
+          height: 16px;
+          border-radius: 50%;
+          box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+        }
+        /* 文字颜色「更换」：取色器透明地盖在字上，手指点到的就是取色器本身（iPhone 只认这样） */
+        .story-bg-row-color-btn {
+          position: relative;
+          font-size: calc(13px*var(--app-text-scale,1));
+          color: var(--c-story-heading, #1e293b);
+        }
+        .story-bg-row-color-btn input {
+          position: absolute;
+          inset: -8px -6px;
+          width: calc(100% + 12px);
+          height: calc(100% + 16px);
+          margin: 0;
+          padding: 0;
+          border: none;
+          opacity: 0;
+          cursor: pointer;
+        }
+        /* 折叠标签 / 不进上下文标签：平时一行，右边是现在填的；点开下面是输入框 */
+        .story-bg-row-fold {
+          width: 100%;
+          border-top: none;
+          border-left: none;
+          border-right: none;
+          background: none;
+          font: inherit;
+          text-align: left;
+        }
+        .story-bg-row-value {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+          max-width: 55%;
+          font-size: calc(13px*var(--app-text-scale,1));
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-bg-row-value span {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .story-bg-row-value i {
+          font-style: normal;
+          transition: transform 0.15s ease;
+        }
+        .story-bg-row-fold[aria-expanded="true"] .story-bg-row-value i {
+          transform: rotate(90deg);
+        }
+        /* 展开时这一行和下面的输入框算一格，中间不画线 */
+        .story-bg-row-fold[aria-expanded="true"] {
+          border-bottom-color: transparent;
+        }
+        .story-bg-row-panel {
+          padding: 10px 0;
+          border-bottom: 1px solid var(--c-story-drawer-border, rgba(124, 104, 68, 0.08));
+        }
+        .story-bg-row-panel input {
+          width: 100%;
+          box-sizing: border-box;
+          padding: 8px 12px;
+          border: none;
+          border-radius: 0;
+          box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06);
+          background: var(--c-story-css-box-bg, rgba(255, 251, 246, 0.88));
+          color: var(--c-story-text, #4b4335);
+          font: inherit;
+          font-size: calc(13px*var(--app-text-scale,1));
+          line-height: 1.6;
+        }
+        .story-bg-row-help {
+          margin-top: 4px;
+          font-size: calc(11px*var(--app-text-scale,1));
+          color: var(--c-story-sub, rgba(95, 82, 61, 0.72));
+        }
+        .story-bg-row-actions button {
+          border: none;
+          background: none;
+          padding: 0;
+          font: inherit;
+          font-size: calc(13px*var(--app-text-scale,1));
+          color: var(--c-story-heading, #1e293b);
+        }
+        .story-bg-row-actions button + button {
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-bg-row-actions .story-bg-brightness-toggle[data-open="true"] {
+          font-weight: 600;
+        }
+        /* 背景亮度：点「亮度」才展开的那条滑块 */
+        .story-bg-row-panel.story-bg-brightness {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          font-size: calc(12px*var(--app-text-scale,1));
+          color: var(--c-story-sub, #94a3b8);
+        }
+        /* 滑块自己画：细线轨道 + 方头，和剧情里四角尖尖的样子一致（系统自带的是圆头） */
+        .story-bg-row-panel.story-bg-brightness input {
+          flex: 1;
+          min-width: 0;
+          width: auto;
+          height: 18px;
+          margin: 0;
+          padding: 0;
+          box-shadow: none;
+          background: none;
+          -webkit-appearance: none;
+          appearance: none;
+          cursor: pointer;
+        }
+        .story-bg-row-panel.story-bg-brightness input::-webkit-slider-runnable-track {
+          height: 2px;
+          border-radius: 0;
+          background: linear-gradient(to right,
+            var(--c-story-heading, #1e293b) var(--story-range-fill, 100%),
+            color-mix(in srgb, var(--c-story-sub, #94a3b8) 40%, transparent) var(--story-range-fill, 100%));
+        }
+        .story-bg-row-panel.story-bg-brightness input::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          width: 12px;
+          height: 12px;
+          margin-top: -5px;
+          border: none;
+          border-radius: 0;
+          background: var(--c-story-heading, #1e293b);
+        }
+        .story-bg-row-panel.story-bg-brightness input::-moz-range-track {
+          height: 2px;
+          border-radius: 0;
+          background: color-mix(in srgb, var(--c-story-sub, #94a3b8) 40%, transparent);
+        }
+        .story-bg-row-panel.story-bg-brightness input::-moz-range-progress {
+          height: 2px;
+          background: var(--c-story-heading, #1e293b);
+        }
+        .story-bg-row-panel.story-bg-brightness input::-moz-range-thumb {
+          width: 12px;
+          height: 12px;
+          border: none;
+          border-radius: 0;
+          background: var(--c-story-heading, #1e293b);
+        }
+        .story-bg-row-panel.story-bg-brightness b {
+          min-width: 34px;
+          text-align: right;
+          font-weight: 400;
+          color: var(--c-story-text, #334155);
+          font-variant-numeric: tabular-nums;
+        }
+
+        /* === 番外模板：「其它要求」右边的「＋快捷指令」，点开挑一条接进去 === */
+        .story-template-extra {
+          position: relative;
+        }
+        .story-template-label-row {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+        }
+        .story-template-quick-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 2px;
+          border: none;
+          background: none;
+          padding: 0 0 6px;
+          font: inherit;
+          font-size: calc(11px*var(--app-text-scale,1));
+          letter-spacing: 0.06em;
+          color: var(--c-story-heading, #1e293b);
+        }
+        .story-template-quick-menu {
+          position: absolute;
+          right: 0;
+          top: 22px;
+          z-index: 3;
+          min-width: 60%;
+          max-width: 100%;
+          max-height: 220px;
+          overflow-y: auto;
+          display: flex;
+          flex-direction: column;
+          background: var(--c-story-drawer-top, #ffffff);
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2), inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+        }
+        .story-template-quick-menu button {
+          border: none;
+          background: none;
+          padding: 10px 12px;
+          text-align: left;
+          font: inherit;
+          font-size: calc(12.5px*var(--app-text-scale,1));
+          line-height: 1.5;
+          color: var(--c-story-text, #3a3b3c);
+        }
+        .story-template-quick-menu button + button {
+          border-top: 1px solid color-mix(in srgb, var(--c-story-sub, #94a3b8) 25%, transparent);
+        }
+        .story-template-quick-empty {
+          padding: 10px 12px;
+          font-size: calc(12px*var(--app-text-scale,1));
+          color: var(--c-story-sub, #94a3b8);
+        }
+
+        /* === 系统指令：输入栏左边的「指令」开关，打开后输入框发的是系统指令 === */
+        /* 关着：透明底 + 细边，颜色全跟主题的次要文字色走，深色主题下也看得见 */
+        .story-command-toggle {
+          flex: 0 0 auto;
+          height: 36px;
+          padding: 0 12px;
+          border: none;
+          border-radius: 0;
+          background: transparent;
+          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-story-sub, #64748b) 45%, transparent);
+          color: var(--c-story-sub, #64748b);
+          font: inherit;
+          font-size: calc(12px*var(--app-text-scale,1));
+          letter-spacing: 0.1em;
+        }
+        .story-command-toggle[data-on="true"] {
+          box-shadow: none;
+          background: var(--c-story-heading, #1e293b);
+          color: var(--c-story-on-heading, var(--c-story-drawer-top, #ffffff));
+        }
+        .story-composer[data-command="true"] {
+          flex-wrap: wrap;
+        }
+        /* 指令模式时输入框上面一排快捷指令，横着滑 */
+        .story-command-strip {
+          flex: 0 0 100%;
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          padding-bottom: 2px;
+        }
+        .story-command-strip-title {
+          font-size: calc(10.5px*var(--app-text-scale,1));
+          letter-spacing: 0.14em;
+          font-weight: 600;
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-command-chips {
+          display: flex;
+          gap: 6px;
+          overflow-x: auto;
+          scrollbar-width: none;
+        }
+        .story-command-chips::-webkit-scrollbar {
+          display: none;
+        }
+        .story-command-chips button {
+          flex: 0 0 auto;
+          max-width: 22em;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          padding: 5px 10px;
+          border: none;
+          border-radius: 0;
+          background: var(--c-story-panel, rgba(255, 255, 255, 0.6));
+          box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+          color: var(--c-story-text, #3a3b3c);
+          font: inherit;
+          font-size: calc(11px*var(--app-text-scale,1));
+        }
+        .story-command-empty {
+          font-size: calc(11px*var(--app-text-scale,1));
+          color: var(--c-story-sub, #94a3b8);
+        }
+        /* 侧栏：快捷指令增删 */
+        .story-command-manage {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding: 12px 0 4px;
+        }
+        .story-command-manage-label {
+          font-size: calc(13px*var(--app-text-scale,1));
+          color: var(--c-story-sub, rgba(95, 82, 61, 0.72));
+        }
+        .story-command-list {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .story-command-item {
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+          padding: 8px 10px 8px 12px;
+          background: var(--c-story-panel, rgba(255, 255, 255, 0.6));
+          box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+          font-size: calc(13px*var(--app-text-scale,1));
+          line-height: 1.6;
+          color: var(--c-story-text, #4b4335);
+        }
+        /* 点文字：放进下面的输入框 */
+        .story-command-item .story-command-item-text {
+          flex: 1;
+          min-width: 0;
+          display: block;
+          padding: 0;
+          border: none;
+          background: none;
+          color: inherit;
+          font: inherit;
+          line-height: inherit;
+          text-align: left;
+          white-space: pre-wrap;
+          word-break: break-word;
+          cursor: pointer;
+        }
+        .story-command-item button {
+          flex: 0 0 auto;
+          display: flex;
+          padding: 3px;
+          border: none;
+          background: none;
+          color: var(--c-story-sub, #94a3b8);
+        }
+        /* [输入快捷指令][保存][发送] 一行；字多了输入框往上长，按钮贴着底 */
+        .story-command-add {
+          display: flex;
+          align-items: flex-end;
+          gap: 6px;
+        }
+        .story-command-add textarea {
+          flex: 1;
+          min-width: 0;
+          height: 34px;
+          min-height: 34px;
+          max-height: 160px;
+          box-sizing: border-box;
+          padding: 7px 10px;
+          resize: none;
+          overflow-y: auto;
+          display: block;
+          border: none;
+          border-radius: 0;
+          outline: none;
+          box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06);
+          background: var(--c-story-css-box-bg, rgba(255, 251, 246, 0.88));
+          color: var(--c-story-text, #4b4335);
+          font: inherit;
+          font-size: calc(13px*var(--app-text-scale,1));
+          line-height: 20px;
+        }
+        .story-command-add textarea::placeholder {
+          color: color-mix(in srgb, var(--c-story-placeholder, #94a3b8) 70%, transparent);
+        }
+        .story-command-add button {
+          flex: 0 0 auto;
+          height: 34px;
+          padding: 0 10px;
+          border: none;
+          border-radius: 0;
+          font: inherit;
+          font-size: calc(12px*var(--app-text-scale,1));
+          letter-spacing: 0.08em;
+        }
+        .story-command-add .story-command-save {
+          background: transparent;
+          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-story-sub, #64748b) 45%, transparent);
+          color: var(--c-story-sub, #64748b);
+        }
+        .story-command-add .story-command-send {
+          background: var(--c-story-heading, #1e293b);
+          color: var(--c-story-on-heading, var(--c-story-drawer-top, #ffffff));
+        }
+        .story-command-add button:disabled {
+          opacity: 0.4;
+        }
+
+        /* === 番外模板面板：从标题栏下沿铺到底 === */
+        .story-template-sheet {
+          position: absolute;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          z-index: 9;
+          display: flex;
+          flex-direction: column;
+          /* 上层是页面底色；自定义主题把底色设成透明（比如用壁纸）时，露出下层的侧栏色，
+             不让后面的正文透上来 */
+          background:
+            linear-gradient(var(--c-story-bg-top, #ffffff), var(--c-story-bg-top, #ffffff)),
+            linear-gradient(180deg, var(--c-story-drawer-top, rgba(253, 253, 254, 0.98)), var(--c-story-drawer-bottom, rgba(248, 249, 250, 0.98)));
+          -webkit-backdrop-filter: blur(20px);
+          backdrop-filter: blur(20px);
+          box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.12);
+        }
+        .story-template-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 16px 20px 8px;
+        }
+        .story-template-title {
+          font-size: calc(15px*var(--app-text-scale,1));
+          font-weight: 600;
+          letter-spacing: 0.06em;
+          color: var(--c-story-heading, #1e293b);
+        }
+        .story-template-body {
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          padding: 4px 20px 4px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .story-template-field {
+          display: block;
+        }
+        .story-template-label {
+          display: block;
+          margin-bottom: 6px;
+          font-size: calc(11px*var(--app-text-scale,1));
+          letter-spacing: 0.12em;
+          font-weight: 600;
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-template-field input,
+        .story-template-field textarea {
+          display: block;
+          width: 100%;
+          box-sizing: border-box;
+          padding: 9px 12px;
+          border: none;
+          border-radius: 0;
+          outline: none;
+          resize: none;
+          background: var(--c-story-css-box-bg, rgba(255, 251, 246, 0.88));
+          box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06);
+          color: var(--c-story-text, #3a3b3c);
+          font: inherit;
+          font-size: calc(13px*var(--app-text-scale,1));
+          line-height: 1.65;
+          -webkit-user-select: text;
+          user-select: text;
+        }
+        .story-template-field textarea::placeholder,
+        .story-template-field input::placeholder {
+          color: color-mix(in srgb, var(--c-story-placeholder, #94a3b8) 70%, transparent);
+        }
+        .story-template-pair {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+        }
+        /* 文风 / 字数 / 场景数 一行三格，文风最宽 */
+        .story-template-triple {
+          grid-template-columns: 1.3fr 1fr 0.8fr;
+        }
+        /* 梗概 / if线设定 共用一个框：上面切换，右边清空当前这一页 */
+        .story-template-tabs {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          margin-bottom: 6px;
+        }
+        .story-template-tabs button {
+          border: none;
+          border-bottom: 2px solid transparent;
+          background: none;
+          padding: 0 0 4px;
+          font: inherit;
+          font-size: calc(11.5px*var(--app-text-scale,1));
+          letter-spacing: 0.12em;
+          font-weight: 600;
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-template-tabs button[data-active="true"] {
+          color: var(--c-story-heading, #1e293b);
+          border-bottom-color: var(--c-story-heading, #1e293b);
+        }
+        .story-template-tabs .story-template-clear {
+          margin-left: auto;
+          display: inline-flex;
+          align-items: center;
+          gap: 3px;
+          font-weight: 400;
+          letter-spacing: 0.04em;
+        }
+        .story-template-tabs .story-template-clear:disabled,
+        .story-template-label-actions .story-template-clear:disabled {
+          opacity: 0.4;
+        }
+        /* 「其它要求」右边：＋快捷指令、清空 */
+        .story-template-label-actions {
+          display: inline-flex;
+          align-items: baseline;
+          gap: 14px;
+        }
+        .story-template-label-actions .story-template-clear {
+          display: inline-flex;
+          align-items: center;
+          gap: 3px;
+          border: none;
+          background: none;
+          padding: 0 0 6px;
+          font: inherit;
+          font-size: calc(11.5px*var(--app-text-scale,1));
+          letter-spacing: 0.04em;
+          color: var(--c-story-sub, #94a3b8);
+        }
+        /* 番外方案：标签、下拉和按钮同一行 */
+        .story-template-preset .story-template-label {
+          margin-bottom: 0;
+          flex-shrink: 0;
+        }
+        /* 人称：user / char 各一行，标签一列、选项一列对齐 */
+        .story-template-persons {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr);
+          align-items: center;
+          gap: 8px 12px;
+        }
+        .story-template-persons .story-template-label {
+          margin-bottom: 0;
+          max-width: 9em;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .story-template-options {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .story-template-options button {
+          padding: 4px 9px;
+          border: none;
+          border-radius: 0;
+          background: var(--c-story-panel, rgba(255, 255, 255, 0.6));
+          box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+          color: var(--c-story-sub, #64748b);
+          font: inherit;
+          font-size: calc(11px*var(--app-text-scale,1));
+        }
+        .story-template-options button[data-active="true"] {
+          background: var(--c-story-heading, #1e293b);
+          color: var(--c-story-on-heading, var(--c-story-drawer-top, #ffffff));
+          box-shadow: none;
+        }
+        .story-template-toggle {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          width: 100%;
+          padding: 10px 12px;
+          border: none;
+          border-radius: 0;
+          background: var(--c-story-panel, rgba(255, 255, 255, 0.6));
+          box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+          color: var(--c-story-text, #3a3b3c);
+          font: inherit;
+          font-size: calc(12.5px*var(--app-text-scale,1));
+          text-align: left;
+        }
+        .story-template-toggle i {
+          position: relative;
+          flex: 0 0 auto;
+          width: 32px;
+          height: 18px;
+          /* 跟着主题的次要文字色走，深色主题下也看得见 */
+          background: color-mix(in srgb, var(--c-story-sub, #94a3b8) 40%, transparent);
+          transition: background 0.18s ease;
+        }
+        .story-template-toggle i::after {
+          content: "";
+          position: absolute;
+          top: 2px;
+          left: 2px;
+          width: 14px;
+          height: 14px;
+          background: #ffffff;
+          transition: transform 0.18s ease;
+        }
+        .story-template-toggle[data-on="true"] i {
+          background: var(--c-story-heading, #1e293b);
+        }
+        .story-template-toggle[data-on="true"] i::after {
+          transform: translateX(14px);
+          background: var(--c-story-on-heading, var(--c-story-drawer-top, #ffffff));
+        }
+        .story-template-send {
+          flex-shrink: 0;
+          height: 44px;
+          margin: 10px 20px calc(env(safe-area-inset-bottom, 0px) + 18px);
+          border: none;
+          border-radius: 0;
+          background: var(--c-story-heading, #1e293b);
+          color: var(--c-story-on-heading, var(--c-story-drawer-top, #ffffff));
+          font: inherit;
+          font-size: calc(14px*var(--app-text-scale,1));
+          letter-spacing: 0.2em;
+        }
+        .story-template-send:disabled {
+          opacity: 0.45;
+        }
+
+        /* === 番外方案：替换大概内容前的确认 === */
+        .story-confirm-overlay {
+          position: absolute;
+          inset: 0;
+          z-index: 30;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0 32px;
+          background: var(--c-story-overlay, rgba(0, 0, 0, 0.2));
+          -webkit-backdrop-filter: blur(2px);
+          backdrop-filter: blur(2px);
+          animation: fade-in 0.2s ease;
+        }
+        .story-confirm {
+          width: 100%;
+          max-width: 300px;
+          box-sizing: border-box;
+          padding: 20px 20px 16px;
+          background:
+            linear-gradient(180deg, var(--c-story-drawer-top, rgba(253, 253, 254, 0.98)), var(--c-story-drawer-bottom, rgba(248, 249, 250, 0.98))),
+            var(--c-story-bg-top, #ffffff);
+          -webkit-backdrop-filter: blur(20px);
+          backdrop-filter: blur(20px);
+          box-shadow: var(--story-paper-shadow);
+        }
+        .story-confirm-title {
+          font-size: calc(15px*var(--app-text-scale,1));
+          font-weight: 600;
+          letter-spacing: 0.04em;
+          color: var(--c-story-heading, #1e293b);
+        }
+        .story-confirm-text {
+          margin-top: 8px;
+          font-size: calc(13px*var(--app-text-scale,1));
+          line-height: 1.7;
+          color: var(--c-story-text-light, #475569);
+        }
+        .story-confirm-actions {
+          display: flex;
+          gap: 10px;
+          margin-top: 18px;
+        }
+        .story-confirm-actions button {
+          flex: 1;
+          height: 38px;
+          border: none;
+          border-radius: 0;
+          background: var(--c-story-panel, rgba(255, 255, 255, 0.5));
+          box-shadow: var(--story-paper-shadow-soft);
+          color: var(--c-story-text, #3a3b3c);
+          font: inherit;
+          font-size: calc(13px*var(--app-text-scale,1));
+          letter-spacing: 0.1em;
+        }
+        .story-confirm-actions button[data-primary="true"] {
+          background: var(--c-story-heading, #1e293b);
+          color: var(--c-story-on-heading, var(--c-story-drawer-top, #ffffff));
+          box-shadow: none;
+        }

@@ -150,3 +150,58 @@ export async function loadReadingCustomFont(): Promise<Blob | null> {
         return null;
     }
 }
+
+// ── 通用图片库 ──
+// 和背景/字体同一个 IndexedDB 库，按任意字符串 key 存 Blob。
+// 片刻纪事的聊天小图、署名头像都放这里。
+
+export async function saveReadingAsset(key: string, blob: Blob | null): Promise<void> {
+    const db = await openBackgroundDb();
+    await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(BG_STORE_NAME, "readwrite");
+        const store = tx.objectStore(BG_STORE_NAME);
+        if (blob) store.put(blob, key);
+        else store.delete(key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+}
+
+export async function loadReadingAsset(key: string): Promise<Blob | null> {
+    try {
+        const db = await openBackgroundDb();
+        const blob = await new Promise<Blob | null>((resolve, reject) => {
+            const tx = db.transaction(BG_STORE_NAME, "readonly");
+            const req = tx.objectStore(BG_STORE_NAME).get(key);
+            req.onsuccess = () => resolve((req.result as Blob) || null);
+            req.onerror = () => reject(req.error);
+        });
+        db.close();
+        return blob;
+    } catch {
+        return null;
+    }
+}
+
+/** 删掉 key 以某个前缀开头的全部资源（比如删一张片刻时带走它的所有小图） */
+export async function deleteReadingAssetsByPrefix(prefix: string): Promise<void> {
+    try {
+        const db = await openBackgroundDb();
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(BG_STORE_NAME, "readwrite");
+            const store = tx.objectStore(BG_STORE_NAME);
+            const req = store.getAllKeys();
+            req.onsuccess = () => {
+                for (const key of req.result) {
+                    if (typeof key === "string" && key.startsWith(prefix)) store.delete(key);
+                }
+            };
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+        db.close();
+    } catch {
+        // 删不干净也不影响主流程
+    }
+}
