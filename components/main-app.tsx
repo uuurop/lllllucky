@@ -10,6 +10,7 @@ import { MediaMaintenanceScheduler } from "@/components/media-maintenance-schedu
 import { DesktopShell } from "./desktop-shell";
 import { OfflinePushRevampAnnouncement } from "./offline-push-revamp-announcement";
 import { SplashAnimation } from "./splash-animation";
+import { loadChatAppSettings } from "@/lib/chat-storage";
 import { MusicProvider } from "@/lib/music-context";
 import { hydrateKvDb, isKvHydrated } from "@/lib/kv-db";
 import { getThemeAssetMap, readThemeProfile } from "@/lib/theme-storage";
@@ -261,6 +262,8 @@ export function MainApp() {
 
       if (cancelled) return;
       setPreparedDesktopTheme(nextPreparedTheme);
+      // 流畅模式：KV 水合完成后按设置恢复全局 class（设置页开关时也会即时切换）
+      document.documentElement.classList.toggle("smooth-mode", loadChatAppSettings().smoothMode === true);
       setHydrated(true);
       if (hasPendingMcpOAuthCallback()) {
         setSplashDismissed(true);

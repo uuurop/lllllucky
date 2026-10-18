@@ -44,3 +44,14 @@
   --font-size-lg: 17px;  --font-size-xl: 20px;
   --font-size-2xl: 24px; --font-size-3xl: 30px;
 }
+
+/* ── 流畅模式：全局禁用毛玻璃模糊 ────────────────────────────
+   全项目 500+ 处 backdrop-filter 是移动端交互卡顿的首要元凶：
+   任何画面变化都会触发所有毛玻璃区域重新截图+高斯模糊+合成。
+   开启后统一换实底（保留原有半透明底色，仅去掉模糊计算）。 */
+.smooth-mode *,
+.smooth-mode *::before,
+.smooth-mode *::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}

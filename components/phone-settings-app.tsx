@@ -115,6 +115,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
     const [floatingDockEnabled, setFloatingDockEnabled] = useState(false);
     const [floatingDockSheetOpen, setFloatingDockSheetOpen] = useState(false);
     const [keepAlive, setKeepAlive] = useState(false);
+    const [smoothMode, setSmoothMode] = useState(false);
     // 角色电脑：施工中弹窗（返回 / 仍要看看）
     const pageBodyRef = useRef<HTMLDivElement | null>(null);
 
@@ -253,6 +254,13 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         onNotice(next ? "已开启后台保活" : "已关闭后台保活");
     }, [onNotice]);
 
+    const handleSmoothModeChange = useCallback((next: boolean) => {
+        setSmoothMode(next);
+        saveChatAppSettings({ ...loadChatAppSettings(), smoothMode: next });
+        document.documentElement.classList.toggle("smooth-mode", next);
+        onNotice(next ? "已开启流畅模式（关闭全局毛玻璃模糊）" : "已关闭流畅模式");
+    }, [onNotice]);
+
     const imageGenerationItem = SETTINGS_MENU.find(i => i.id === "imageGeneration")!;
     const imageGenerationFeaturedItem: FeaturedCardItem = {
         id: imageGenerationItem.id,
@@ -354,6 +362,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         setPromptViewerEnabled(settings.promptViewerEnabled === true);
         setQuickActionEnabled(settings.quickActionEnabled === true);
         setFloatingDockEnabled(settings.floatingDockEnabled === true);
+        setSmoothMode(settings.smoothMode === true);
         setKeepAlive(loadKeepAlive());
     }, []);
 
@@ -449,6 +458,16 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                                     <div className="card-featured-desc">切到后台时尽量保持网页运行，主动消息与轮询不中断</div>
                                 </div>
                                 <Toggle checked={keepAlive} onChange={handleKeepAliveChange} className="settings-toggle-control" />
+                            </div>
+                            <div className="app-card card-featured settings-toggle-card">
+                                <span className="card-icon card-icon-glass">
+                                    <GlassIcon name="quick-action" />
+                                </span>
+                                <div className="card-featured-body">
+                                    <div className="card-featured-label">流畅模式</div>
+                                    <div className="card-featured-desc">关闭全局毛玻璃模糊换实底，低配机/卡顿明显时开启</div>
+                                </div>
+                                <Toggle checked={smoothMode} onChange={handleSmoothModeChange} className="settings-toggle-control" />
                             </div>
                         </div>
                         {isAdmin ? (
