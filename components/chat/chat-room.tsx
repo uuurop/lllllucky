@@ -606,6 +606,16 @@ function normalizeCustomPanelHeight(value: unknown): string | undefined {
     return undefined;
 }
 
+/** 流式预览刷新限频（ms）：原来按 rAF 每帧整页重绘，聊天记录一多就卡；
+ *  攒 90ms 刷一次（每秒约 11 次），打字动画仍然顺滑，渲染开销降一个量级 */
+const STREAM_PREVIEW_FLUSH_MS = 90;
+function scheduleStreamFlush(callback: () => void): number {
+    return window.setTimeout(callback, STREAM_PREVIEW_FLUSH_MS);
+}
+function cancelStreamFlush(id: number): void {
+    window.clearTimeout(id);
+}
+
 const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     characterName: string;
     characterId: string;
@@ -1111,9 +1121,9 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [offlineStreamPreview, setOfflineStreamPreview] = useState<null | { content: string; summary: string }>(null);
     const streamAccumRef = useRef("");
     const offlineStreamAccumRef = useRef("");
-    // 群聊/单聊流式预览解析的 rAF 合并帧（限频：一帧最多解析一次全文）
+    // 群聊/单聊流式预览解析的限频合并刷新（限频：一帧最多解析一次全文）
     const streamParseFrameRef = useRef(0);
-    // 线下模式流式预览解析的 rAF 合并帧（独立于线上，避免互相干扰）
+    // 线下模式流式预览解析的限频合并刷新（独立于线上，避免互相干扰）
     const offlineStreamFrameRef = useRef(0);
     const [activeOfflineTarget, setActiveOfflineTarget] = useState<OfflineActionTarget | null>(null);
     const [editingOfflineTarget, setEditingOfflineTarget] = useState<OfflineActionTarget | null>(null);
@@ -2123,11 +2133,11 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         followStreamScroll();
     }, [streamPreview, offlineStreamPreview, offlineMode, followStreamScroll]);
 
-    // 卸载时清理挂起的流式预览 rAF 帧，防止切会话后回调残留触发 setState
+    // 卸载时清理挂起的流式预览刷新，防止切会话后回调残留触发 setState
     useEffect(() => {
         return () => {
-            if (streamParseFrameRef.current) cancelAnimationFrame(streamParseFrameRef.current);
-            if (offlineStreamFrameRef.current) cancelAnimationFrame(offlineStreamFrameRef.current);
+            if (streamParseFrameRef.current) cancelStreamFlush(streamParseFrameRef.current);
+            if (offlineStreamFrameRef.current) cancelStreamFlush(offlineStreamFrameRef.current);
             if (streamFollowRef.current) cancelAnimationFrame(streamFollowRef.current);
             streamParseFrameRef.current = 0;
             offlineStreamFrameRef.current = 0;
@@ -3317,9 +3327,9 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         onStreamDelta: (delta) => {
                             if (!isCurrentGeneration()) return;
                             streamAccumRef.current += delta;
-                            // 群聊全文解析较重：合并到 rAF 下一帧执行，避免一帧多段增量重复解析
+                            // 群聊全文解析较重：合并到 90ms 限频刷新执行，避免一帧多段增量重复解析
                             if (streamParseFrameRef.current) return;
-                            streamParseFrameRef.current = window.requestAnimationFrame(() => {
+                            streamParseFrameRef.current = scheduleStreamFlush(() => {
                                 streamParseFrameRef.current = 0;
                                 if (!isCurrentGeneration()) return;
                                 const nameToId = new Map(groupCharacters.map(item => [item.name, item.id]));
@@ -3336,7 +3346,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         },
                         onTextPart: () => {
                             if (streamParseFrameRef.current) {
-                                cancelAnimationFrame(streamParseFrameRef.current);
+                                cancelStreamFlush(streamParseFrameRef.current);
                                 streamParseFrameRef.current = 0;
                             }
                             streamAccumRef.current = "";
@@ -3364,9 +3374,9 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         onStreamDelta: (delta) => {
                             if (!isCurrentGeneration()) return;
                             streamAccumRef.current += delta;
-                            // 预览更新合并到 rAF 下一帧：每帧最多一次全文净化+setState，避免高频增量卡顿
+                            // 预览更新合并到 90ms 限频刷新：每帧最多一次全文净化+setState，避免高频增量卡顿
                             if (streamParseFrameRef.current) return;
-                            streamParseFrameRef.current = window.requestAnimationFrame(() => {
+                            streamParseFrameRef.current = scheduleStreamFlush(() => {
                                 streamParseFrameRef.current = 0;
                                 if (!isCurrentGeneration()) return;
                                 setStreamPreview({ texts: splitStreamPreviewSegments(cleanStreamText(streamAccumRef.current, { stripXmlTags: streamPreviewTagConfig.online, stripLiterals: streamPreviewTagConfig.stripTexts })) });
@@ -3374,7 +3384,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         },
                         onTextPart: () => {
                             if (streamParseFrameRef.current) {
-                                cancelAnimationFrame(streamParseFrameRef.current);
+                                cancelStreamFlush(streamParseFrameRef.current);
                                 streamParseFrameRef.current = 0;
                             }
                             streamAccumRef.current = "";
@@ -3786,9 +3796,9 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     onStreamDelta: (delta) => {
                         if (!isCurrentGeneration()) return;
                         streamAccumRef.current += delta;
-                        // 群聊全文解析较重：合并到 rAF 下一帧执行，避免一帧多段增量重复解析
+                        // 群聊全文解析较重：合并到 90ms 限频刷新执行，避免一帧多段增量重复解析
                         if (streamParseFrameRef.current) return;
-                        streamParseFrameRef.current = window.requestAnimationFrame(() => {
+                        streamParseFrameRef.current = scheduleStreamFlush(() => {
                             streamParseFrameRef.current = 0;
                             if (!isCurrentGeneration()) return;
                             const nameToId = new Map(groupCharacters.map(item => [item.name, item.id]));
@@ -3807,7 +3817,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         if (!isCurrentGeneration()) return;
                         // 本轮群聊内容经 onTextPart 落库后重置，供下一轮（工具轮）重新预览
                         if (streamParseFrameRef.current) {
-                            cancelAnimationFrame(streamParseFrameRef.current);
+                            cancelStreamFlush(streamParseFrameRef.current);
                             streamParseFrameRef.current = 0;
                         }
                         streamAccumRef.current = "";
@@ -3962,9 +3972,9 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     onStreamDelta: (delta) => {
                         if (!isCurrentGeneration()) return;
                         streamAccumRef.current += delta;
-                        // 预览更新合并到 rAF 下一帧：每帧最多一次全文净化+setState，避免高频增量卡顿
+                        // 预览更新合并到 90ms 限频刷新：每帧最多一次全文净化+setState，避免高频增量卡顿
                         if (streamParseFrameRef.current) return;
-                        streamParseFrameRef.current = window.requestAnimationFrame(() => {
+                        streamParseFrameRef.current = scheduleStreamFlush(() => {
                             streamParseFrameRef.current = 0;
                             if (!isCurrentGeneration()) return;
                             setStreamPreview({ texts: splitStreamPreviewSegments(cleanStreamText(streamAccumRef.current, { stripXmlTags: streamPreviewTagConfig.online, stripLiterals: streamPreviewTagConfig.stripTexts })) });
@@ -3975,7 +3985,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         // 本轮流式已结束且内容经 splitAndSaveAIMessages 落库：清掉预览、重置累积，
                         // 供下一轮（工具轮）重新累积预览
                         if (streamParseFrameRef.current) {
-                            cancelAnimationFrame(streamParseFrameRef.current);
+                            cancelStreamFlush(streamParseFrameRef.current);
                             streamParseFrameRef.current = 0;
                         }
                         streamAccumRef.current = "";
@@ -4369,9 +4379,9 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 const onOfflineDelta = (delta: string) => {
                     if (!isCurrentOfflineRun()) return;
                     offlineStreamAccumRef.current += delta;
-                    // 线下预览解析合并到 rAF 下一帧：每帧最多一次全文解析+setState
+                    // 线下预览解析合并到 90ms 限频刷新：每帧最多一次全文解析+setState
                     if (offlineStreamFrameRef.current) return;
-                    offlineStreamFrameRef.current = window.requestAnimationFrame(() => {
+                    offlineStreamFrameRef.current = scheduleStreamFlush(() => {
                         offlineStreamFrameRef.current = 0;
                         if (!isCurrentOfflineRun()) return;
                         // 与引擎顺序一致：先按预设 strip_texts 清洗原文，再解析（避免剔除文本影响 XML 结构时预览与最终结果不一致）
@@ -4519,9 +4529,9 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             const onOfflineDelta = (delta: string) => {
                 if (!isCurrentOfflineRun()) return;
                 offlineStreamAccumRef.current += delta;
-                // 线下预览解析合并到 rAF 下一帧：每帧最多一次全文解析+setState（与首次发送路径对齐）
+                // 线下预览解析合并到 90ms 限频刷新：每帧最多一次全文解析+setState（与首次发送路径对齐）
                 if (offlineStreamFrameRef.current) return;
-                offlineStreamFrameRef.current = window.requestAnimationFrame(() => {
+                offlineStreamFrameRef.current = scheduleStreamFlush(() => {
                     offlineStreamFrameRef.current = 0;
                     if (!isCurrentOfflineRun()) return;
                     // 与引擎顺序一致：先按预设 strip_texts 清洗原文，再解析（避免剔除文本影响 XML 结构时预览与最终结果不一致）
