@@ -2215,3 +2215,9 @@ export function getLatestCharacterStateValues(
 
     return candidates[0]?.stateValues || [];
 }
+
+/** 聊天 app 内展示用的角色头像：角色卡头像（联系人自定义头像功能不在本分支）。 */
+export function resolveChatAvatar(characterId: string | undefined | null): string {
+    if (!characterId) return "";
+    return loadCharacters().find(c => c.id === characterId)?.avatar || "";
+}
