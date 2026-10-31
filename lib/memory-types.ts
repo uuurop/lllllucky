@@ -44,6 +44,12 @@ export type MemoryConfig = {
         adventure?: boolean;
         custom_app?: boolean;
     };
+    /**
+     * Per-app short-term budget overrides. Key is the assembler appId
+     * (e.g. "story"). Missing entry / missing field → fall back to the
+     * global shortTermTokenBudget. Long-term & core budgets stay global.
+     */
+    perAppBudget?: Record<string, { shortTermTokenBudget?: number }>;
 };
 
 export type MemorySearchResult = {

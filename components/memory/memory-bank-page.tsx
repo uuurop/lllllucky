@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, useState, useEffect, useCallback, type CSSProperties, type ReactNode } from "react";
-import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronRight, Filter, type LucideIcon } from "lucide-react";
+import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronRight, Filter, BookOpen, type LucideIcon } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MemoryTimeline } from "./memory-timeline";
 import { Toggle } from "@/components/ui/form";
@@ -205,6 +205,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [savingMemory, setSavingMemory] = useState(false);
     const [summarizeRangeOpen, setSummarizeRangeOpen] = useState(false);
     const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
+    const [appBindingOpen, setAppBindingOpen] = useState(false);
 
     const disabledSourceCount = MEMORY_SOURCE_OPTIONS
         .filter(source => (config.shortTermAllowedSources ?? {})[source.key] === false).length;
@@ -1039,7 +1040,81 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         step={MEMORY_TOKEN_BUDGET_STEP.coreMemoryTokenBudget}
                         onChange={value => saveBudget("coreMemoryTokenBudget", value)}
                     />
+                    <button type="button" className="menu-item w-full text-left" onClick={() => setAppBindingOpen(true)}>
+                        <MemorySettingsIcon icon={BookOpen} color={BINDING_ACCENTS.voice} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">单独绑定</span>
+                            <span className="menu-desc">给单个应用单独设置短期记忆+最近上下文截断量</span>
+                        </div>
+                        <div className="menu-right">
+                            <span className="menu-desc mr-1">{config.perAppBudget?.story?.shortTermTokenBudget ? "剧情已绑定" : "跟随全局"}</span>
+                            <ChevronRight size={16} />
+                        </div>
+                    </button>
                 </div>
+
+                {appBindingOpen ? (
+                    <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setAppBindingOpen(false)}>
+                        <div className="modal-sheet memory-source-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
+                            <div className="modal-header" data-ui="modal-header">
+                                <span style={{ width: 28 }} />
+                                <h3 className="modal-title">单独绑定</h3>
+                                <button className="modal-header-btn modal-header-btn-muted" onClick={() => setAppBindingOpen(false)}><X size={18} /></button>
+                            </div>
+                            <div className="modal-body modal-body-tight" data-ui="modal-body">
+                                <div className="menu-group">
+                                    <div className="menu-item">
+                                        <MemorySettingsIcon icon={BookOpen} color={BINDING_ACCENTS.voice} />
+                                        <div className="menu-label-group">
+                                            <span className="menu-label">剧情</span>
+                                            <span className="menu-desc">仅影响剧情 app；长期记忆与核心记忆仍跟随全局</span>
+                                        </div>
+                                        <div className="menu-right">
+                                            <Toggle
+                                                checked={typeof config.perAppBudget?.story?.shortTermTokenBudget === "number"}
+                                                onChange={(v) => {
+                                                    const rest = { ...(config.perAppBudget ?? {}) };
+                                                    if (v) {
+                                                        rest.story = { shortTermTokenBudget: config.shortTermTokenBudget };
+                                                    } else {
+                                                        delete rest.story;
+                                                    }
+                                                    const next = { ...config, perAppBudget: rest };
+                                                    setConfig(next);
+                                                    saveMemoryConfig(next);
+                                                }}
+                                            />
+                                        </div>
+                                    </div>
+                                    {typeof config.perAppBudget?.story?.shortTermTokenBudget === "number" ? (
+                                        <MemorySettingsSliderItem
+                                            icon={Users}
+                                            color={BINDING_ACCENTS.voice}
+                                            label="短期记忆+最近上下文"
+                                            desc="剧情 app 的聊天历史与近期事件截断量"
+                                            value={config.perAppBudget.story.shortTermTokenBudget}
+                                            min={MEMORY_TOKEN_BUDGET_MIN.shortTermTokenBudget}
+                                            max={MEMORY_TOKEN_BUDGET_MAX}
+                                            step={MEMORY_TOKEN_BUDGET_STEP.shortTermTokenBudget}
+                                            onChange={(value) => {
+                                                const next = {
+                                                    ...config,
+                                                    perAppBudget: {
+                                                        ...(config.perAppBudget ?? {}),
+                                                        story: { shortTermTokenBudget: value },
+                                                    },
+                                                };
+                                                setConfig(next);
+                                                saveMemoryConfig(next);
+                                            }}
+                                        />
+                                    ) : null}
+                                </div>
+                                <p className="menu-group-desc mx-2">关闭后剧情 app 恢复跟随全局截断量</p>
+                            </div>
+                        </div>
+                    </div>
+                ) : null}
 
                 {/* Summarization interval */}
                 <p className="menu-group-desc mx-2">自动总结间隔</p>

@@ -951,7 +951,11 @@ export function prepareShortTermContext(
 
     // Activation context: full timeline for keyword matching (not truncated)
     const wbActivationContext = timeline.slice(-10).map(e => e.content).join("\n");
-    const budget = memConfig.shortTermTokenBudget;
+    // Per-app override (e.g. 剧情 app 单独绑定的短期记忆截断量)；未绑定时跟随全局
+    const appBudgetOverride = memConfig.perAppBudget?.[appId]?.shortTermTokenBudget;
+    const budget = typeof appBudgetOverride === "number" && appBudgetOverride > 0
+        ? appBudgetOverride
+        : memConfig.shortTermTokenBudget;
     const currentTag = getFeatureTag(appId);
     const history = options?.history ?? [];
     const characterName = loadCharacters().find(c => c.id === characterId)?.name ?? "角色";
