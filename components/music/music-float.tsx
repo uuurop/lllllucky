@@ -7,6 +7,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useMusicPlayerOptional, type MusicControlsValue } from "@/lib/music-context";
 import { loadMusicFloatMode, MUSIC_FLOAT_MODE_EVENT, type MusicFloatMode } from "@/lib/music-bg";
 import type { MusicTrack } from "@/lib/music-storage";
+import MusicDesktopLyrics, { CloudLikeButton, DesktopLyricsButton } from "./music-desktop-lyrics";
+import { MusicCompanionRuntime } from "./music-companion";
+import MusicCompanionFloat from "./music-companion-float";
 
 const DRAG_START_THRESHOLD = 6;
 const EDGE_MARGIN = 10;
@@ -138,7 +141,8 @@ function DynamicIslandPanel({ player, track, closeButton }: {
                 </div>
                 <span className="music-float-island-time">-{formatTime(Math.max(0, duration - currentTime))}</span>
             </div>
-            <div className="music-float-island-controls">
+            <div className="music-float-island-controls music-dynamic-island-controls">
+                <DesktopLyricsButton />
                 <button className="music-float-island-btn" onClick={(e) => { e.stopPropagation(); player.prev(); }} aria-label="上一首">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" /></svg>
                 </button>
@@ -148,12 +152,23 @@ function DynamicIslandPanel({ player, track, closeButton }: {
                 <button className="music-float-island-btn" onClick={(e) => { e.stopPropagation(); player.next(); }} aria-label="下一首">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zm8.5 0h2V6h-2v12z" /></svg>
                 </button>
+                <CloudLikeButton key={track.id} track={track} />
             </div>
         </div>
     );
 }
 
 export default function MusicFloat({ hidden }: { hidden?: boolean }) {
+    const player = useMusicPlayerOptional();
+    return <>
+        <MusicCompanionRuntime />
+        <MusicCompanionFloat />
+        <MusicDesktopLyrics hidden={hidden || player?.floatDismissed} />
+        <MusicFloatControls hidden={hidden} />
+    </>;
+}
+
+function MusicFloatControls({ hidden }: { hidden?: boolean }) {
     const player = useMusicPlayerOptional();
     const rootRef = useRef<HTMLDivElement>(null);
     const [mode, setMode] = useState<MusicFloatMode>("orb");
@@ -324,6 +339,7 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
     // ── 顶部灵动岛模式 ──
     if (mode === "island") {
         return (
+            <>
             <div
                 className="music-island-root"
                 {...(expanded ? { "data-expanded": "" } : {})}
@@ -362,11 +378,13 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
                     />
                 )}
             </div>
+            </>
         );
     }
 
     // ── 悬浮球模式 ──
     return (
+        <>
         <div
             ref={rootRef}
             className="music-float"
@@ -395,5 +413,6 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
             {/* 关闭按钮：展开后出现 */}
             {expanded && closeBtn}
         </div>
+        </>
     );
 }

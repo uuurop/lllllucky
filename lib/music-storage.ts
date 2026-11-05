@@ -7,6 +7,7 @@ export type MusicTrack = {
     title: string;
     artist: string;
     album?: string;
+    playbackSource?: string; // Name of the playlist or entry point that started playback.
     duration: number;        // seconds
     coverUrl?: string;       // data URL or blob URL
     lyrics?: string;         // LRC format or plain text

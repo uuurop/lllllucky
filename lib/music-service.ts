@@ -217,6 +217,49 @@ export async function searchNetease(query: string, limit = 20): Promise<NeteaseS
     }
 }
 
+type CatalogArtistResponse = { id: number; name: string; picUrl?: string; img1v1Url?: string; musicSize?: number; albumSize?: number };
+type CatalogPlaylistResponse = { id: number; name: string; coverImgUrl?: string; trackCount?: number; creator?: { nickname?: string }; playCount?: number; subscribed?: boolean };
+type CatalogAlbumResponse = { id: number; name: string; picUrl?: string; artists?: { name: string }[]; artist?: { name: string } };
+
+export type NeteaseCatalogKind = "all" | "songs" | "artists" | "playlists" | "albums";
+export type NeteaseCatalogAlbum = NeteaseAlbum & { artist: string };
+export type NeteaseCatalog = { songs: NeteaseSearchResult[]; artists: NeteaseArtist[]; playlists: NeteasePlaylist[]; albums: NeteaseCatalogAlbum[]; partial: boolean };
+
+/** Typed catalog search for the music app. Existing song-only callers stay unchanged. */
+export async function searchNeteaseCatalog(query: string, kind: NeteaseCatalogKind = "all", signal?: AbortSignal): Promise<NeteaseCatalog> {
+    const base = neteaseBase();
+    if (!base) throw new Error("请先在音乐设置中配置服务地址");
+    const types = { songs: 1, artists: 100, playlists: 1000, albums: 10 };
+    const kinds = kind === "all" ? Object.keys(types) as (keyof typeof types)[] : [kind];
+    const result: NeteaseCatalog = { songs: [], artists: [], playlists: [], albums: [], partial: false };
+    const responses = await Promise.allSettled(kinds.map(async key => {
+        const response = await fetch(withNeteaseParams(`${base}/cloudsearch?keywords=${encodeURIComponent(query.trim())}&type=${types[key]}&limit=30`), { signal });
+        if (!response.ok) throw new Error("搜索服务暂时不可用");
+        const data = await response.json();
+        if (data.code && data.code !== 200) throw new Error("搜索服务暂时不可用");
+        const payload = data.result || {};
+        if (key === "songs") result.songs = Array.isArray(payload.songs) ? payload.songs.map(mapSongToSearchResult) : [];
+        if (key === "artists") result.artists = (Array.isArray(payload.artists) ? payload.artists : []).map((item: CatalogArtistResponse) => ({ id: item.id, name: item.name, cover: secureHttpUrl(item.picUrl || item.img1v1Url), musicSize: item.musicSize || 0, albumSize: item.albumSize || 0 }));
+        if (key === "playlists") result.playlists = (Array.isArray(payload.playlists) ? payload.playlists : []).map((item: CatalogPlaylistResponse) => ({ id: item.id, name: item.name, coverUrl: secureHttpUrl(item.coverImgUrl), trackCount: item.trackCount || 0, creator: item.creator?.nickname || "", playCount: item.playCount, subscribed: !!item.subscribed }));
+        if (key === "albums") result.albums = (Array.isArray(payload.albums) ? payload.albums : []).map((item: CatalogAlbumResponse) => ({ id: item.id, name: item.name, coverUrl: secureHttpUrl(item.picUrl), artist: (item.artists || (item.artist ? [item.artist] : [])).map((artist: { name: string }) => artist.name).join(" / ") }));
+    }));
+    if (signal?.aborted) throw new DOMException("Search cancelled", "AbortError");
+    const failures = responses.filter(response => response.status === "rejected").length;
+    if (failures === responses.length) throw new Error("搜索失败，请检查音乐服务连接后重试");
+    result.partial = failures > 0;
+    return result;
+}
+
+export async function getSubscribedMusicArtists(): Promise<NeteaseArtist[]> {
+    const base = neteaseBase();
+    if (!base) return [];
+    try {
+        const response = await fetch(withNeteaseParams(`${base}/artist/sublist?limit=100&timestamp=${Date.now()}`));
+        const data = await response.json();
+        return (Array.isArray(data.data) ? data.data : []).map((item: CatalogArtistResponse) => ({ id: item.id, name: item.name, cover: secureHttpUrl(item.picUrl || item.img1v1Url), musicSize: item.musicSize || 0, albumSize: item.albumSize || 0 }));
+    } catch { return []; }
+}
+
 export type NeteasePlayInfo = {
     url: string | null;
     /** true when the returned url is only a free-trial clip (usually 30s) */
@@ -266,16 +309,35 @@ export async function getNeteasePlayUrl(songId: number): Promise<string | null> 
     return info.url;
 }
 
-/** Get lyrics for a Netease song */
+export type NeteaseLyricBundle = { original: string; translated: string };
+const lyricBundleCache = new Map<number, Promise<NeteaseLyricBundle>>();
+
+/** Keep the original-only API compatible with existing music consumers. */
 export async function getNeteaseLyrics(songId: number): Promise<string> {
+    return (await getNeteaseLyricBundle(songId)).original;
+}
+
+export function getNeteaseLyricBundle(songId: number): Promise<NeteaseLyricBundle> {
+    const cached = lyricBundleCache.get(songId);
+    if (cached) return cached;
+    const request = fetchNeteaseLyricBundle(songId).then(bundle => {
+        if (!bundle.original) lyricBundleCache.delete(songId);
+        return bundle;
+    });
+    if (lyricBundleCache.size >= 60) lyricBundleCache.delete(lyricBundleCache.keys().next().value!);
+    lyricBundleCache.set(songId, request);
+    return request;
+}
+
+async function fetchNeteaseLyricBundle(songId: number): Promise<NeteaseLyricBundle> {
     const base = neteaseBase();
-    if (!base) return "";
+    if (!base) return { original: "", translated: "" };
     try {
-        const resp = await fetch(withNeteaseParams(`${base}/lyric?id=${songId}`));
+        const resp = await fetch(withNeteaseParams(`${base}/lyric?id=${songId}`), { signal: AbortSignal.timeout(12000) });
         const data = await resp.json();
-        return data?.lrc?.lyric || "";
+        return { original: typeof data?.lrc?.lyric === "string" ? data.lrc.lyric : "", translated: typeof data?.tlyric?.lyric === "string" ? data.tlyric.lyric : "" };
     } catch {
-        return "";
+        return { original: "", translated: "" };
     }
 }
 
@@ -345,6 +407,26 @@ export async function checkLoginStatus(baseUrl: string): Promise<{ loggedIn: boo
 }
 
 // ── User Playlists ──
+
+/** Real account red-heart state; never infer this from a local playlist flag. */
+export async function getCloudSongLiked(songId: number): Promise<boolean> {
+    if (!loadNeteaseCookie()) throw new Error("请先在音乐设置中登录网易云账号");
+    const statusResp = await fetch(withNeteaseParams(`${neteaseBase()}/login/status?timestamp=${Date.now()}`), { cache: "no-store", signal: AbortSignal.timeout(12000) });
+    const status = await statusResp.json();
+    const uid = status?.data?.profile?.userId;
+    if (!uid) throw new Error("登录已失效，请重新登录网易云账号");
+    const resp = await fetch(withNeteaseParams(`${neteaseBase()}/likelist?uid=${uid}&timestamp=${Date.now()}`), { cache: "no-store", signal: AbortSignal.timeout(12000) });
+    const data = await resp.json();
+    if (!resp.ok || data?.code !== 200 || !Array.isArray(data.ids)) throw new Error("未能读取红心状态，请稍后重试");
+    return data.ids.some((id: number) => Number(id) === songId);
+}
+
+export async function setCloudSongLiked(songId: number, liked: boolean): Promise<void> {
+    if (!loadNeteaseCookie()) throw new Error("请先在音乐设置中登录网易云账号");
+    const resp = await fetch(withNeteaseParams(`${neteaseBase()}/like?id=${songId}&like=${liked}&timestamp=${Date.now()}`), { cache: "no-store", signal: AbortSignal.timeout(12000) });
+    const data = await resp.json();
+    if (!resp.ok || data?.code !== 200) throw new Error("红心同步失败，请检查登录状态后重试");
+}
 
 export type NeteasePlaylist = {
     id: number;

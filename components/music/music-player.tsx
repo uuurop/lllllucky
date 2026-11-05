@@ -1,22 +1,30 @@
 // components/music/music-player.tsx — Full-screen immersive music player
-// Two visual states: cover (ambient flowing background) and glow lyrics.
+// Cover-led now playing page and timestamp-aligned bilingual lyrics.
 // A vinyl mode is kept as a switchable style for nostalgia.
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMusicPlayer, type PlayMode } from "@/lib/music-context";
 import { scrollElementWithinContainer } from "@/lib/dom-scroll";
-import { kvGet, kvSet } from "@/lib/kv-db";
+import { kvGet, kvSet, registerKvMigration } from "@/lib/kv-db";
 import { extractCoverPalette, DEFAULT_COVER_PALETTE, type CoverPalette } from "@/lib/cover-color";
 import {
-    getUserPlaylists, addTracksToPlaylist, removeTracksFromPlaylist, getNeteasePlayInfo,
-    isNeteaseConfigured, recordTrackPlaylist, removeTrackPlaylistRecord, getTrackPlaylistId,
+    getUserPlaylists, addTracksToPlaylist, getNeteasePlayInfo,
+    isNeteaseConfigured, recordTrackPlaylist,
     getSongCommentPage, getNeteaseSongDetail,
     type NeteasePlaylist,
 } from "@/lib/music-service";
 import MusicCommentsPage from "./music-comments";
 import MusicArtistPage from "./music-artist";
 import { loadMusicBg, playerBgStyle, MUSIC_BG_EVENT, type MusicBgConfig } from "@/lib/music-bg";
+import { getNeteaseLyricBundle } from "@/lib/music-service";
+import { bilingualLyrics } from "@/lib/music-lyrics";
+import { CloudLikeButton } from "./music-desktop-lyrics";
+import MusicCompanion, { openCompanionRecords, shareCompanionLyric, useMusicCompanion } from "./music-companion";
+
+const COMPANION_MOTION_KEY = "music-companion-window-motion-v1";
+registerKvMigration(COMPANION_MOTION_KEY);
+type CompanionWindowMotion = "on" | "auto" | "off";
 
 const PLAY_MODE_ICONS: Record<PlayMode, { svg: string; label: string }> = {
     sequence: {
@@ -33,19 +41,6 @@ const PLAY_MODE_ICONS: Record<PlayMode, { svg: string; label: string }> = {
     },
 };
 
-const WAVE_BAR_COUNT = 44;
-
-/** Deterministic waveform heights per track so the bar shape is stable. */
-function waveHeights(seedText: string): number[] {
-    let seed = 0;
-    for (let i = 0; i < seedText.length; i++) seed = (seed * 31 + seedText.charCodeAt(i)) % 100000;
-    const heights: number[] = [];
-    for (let i = 0; i < WAVE_BAR_COUNT; i++) {
-        const v = Math.abs(Math.sin(seed * 0.37 + i * 0.9) * 0.6 + Math.sin(seed * 0.11 + i * 2.3) * 0.4);
-        heights.push(6 + Math.round(v * 16));
-    }
-    return heights;
-}
 
 function formatCount(value: number): string {
     if (!Number.isFinite(value) || value <= 0) return "";
@@ -59,12 +54,22 @@ type BodyView = "cover" | "lyrics";
 
 export default function MusicPlayer() {
     const player = useMusicPlayer();
+    const companion = useMusicCompanion();
+    const lyricPress = useRef<{ timer: ReturnType<typeof setTimeout> | null; x: number; y: number; shared: boolean }>({ timer: null, x: 0, y: 0, shared: false });
     const progressRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [dragTime, setDragTime] = useState(0);
     const [view, setView] = useState<BodyView>("cover");
+    const [showMore, setShowMore] = useState(false);
+    const [companionMotion, setCompanionMotion] = useState<CompanionWindowMotion>(() => {
+        const saved = kvGet(COMPANION_MOTION_KEY);
+        return saved === "auto" || saved === "off" ? saved : "on";
+    });
+    const [showTranslation, setShowTranslation] = useState(true);
+    const [browsingLyrics, setBrowsingLyrics] = useState(false);
+    const [lyricBundle, setLyricBundle] = useState({ id: "", original: "", translated: "" });
     const [playerStyle, setPlayerStyle] = useState<PlayerStyle>(() =>
-        (typeof window !== "undefined" && kvGet("music-player-style") === "vinyl") ? "vinyl" : "modern");
+        (typeof window !== "undefined" && kvGet("music-player-cover-style-v2") === "vinyl") ? "vinyl" : "modern");
     const [showQueue, setShowQueue] = useState(false);
     const [showComments, setShowComments] = useState(false);
     const [artistView, setArtistView] = useState<{ id: number; name: string } | null>(null);
@@ -83,7 +88,7 @@ export default function MusicPlayer() {
     // and custom background. Re-read a few times until hydration has settled.
     useEffect(() => {
         const timers = [300, 1200, 3000].map(ms => setTimeout(() => {
-            const stored = kvGet("music-player-style");
+            const stored = kvGet("music-player-cover-style-v2");
             if (stored === "vinyl" || stored === "modern") {
                 setPlayerStyle(prev => (prev === stored ? prev : stored));
             }
@@ -91,6 +96,8 @@ export default function MusicPlayer() {
                 const fresh = loadMusicBg();
                 return JSON.stringify(prev) === JSON.stringify(fresh) ? prev : fresh;
             });
+            const motion = kvGet(COMPANION_MOTION_KEY);
+            if (motion === "on" || motion === "auto" || motion === "off") setCompanionMotion(motion);
         }, ms));
         return () => timers.forEach(clearTimeout);
     }, []);
@@ -218,35 +225,31 @@ export default function MusicPlayer() {
     const togglePlayerStyle = useCallback(() => {
         setPlayerStyle(prev => {
             const next: PlayerStyle = prev === "modern" ? "vinyl" : "modern";
-            try { kvSet("music-player-style", next); } catch { /* ignore */ }
+            try { kvSet("music-player-cover-style-v2", next); } catch { /* ignore */ }
             showMusicToast(next === "vinyl" ? "已切换为黑胶唱片样式" : "已切换为现代封面样式");
             return next;
         });
     }, [showMusicToast]);
 
     // ── Parse LRC lyrics ──
-    const parsedLyrics = useRef<{ time: number; text: string }[]>([]);
+    const parsedLyrics = useMemo(() => ({ current: bilingualLyrics(
+        lyricBundle.id === player.currentTrack?.id ? lyricBundle.original || player.currentTrack?.lyrics || "" : player.currentTrack?.lyrics || "",
+        lyricBundle.id === player.currentTrack?.id ? lyricBundle.translated : "",
+    ) }), [lyricBundle, player.currentTrack?.id, player.currentTrack?.lyrics]);
     const [activeLyricIdx, setActiveLyricIdx] = useState(-1);
     const lyricsContainerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        const lrc = player.currentTrack?.lyrics || "";
-        if (!lrc) {
-            parsedLyrics.current = [];
-            return;
-        }
-        const lines: { time: number; text: string }[] = [];
-        for (const line of lrc.split("\n")) {
-            const match = line.match(/\[(\d+):(\d+(?:\.\d+)?)\](.*)/);
-            if (match) {
-                const mins = parseInt(match[1], 10);
-                const secs = parseFloat(match[2]);
-                lines.push({ time: mins * 60 + secs, text: match[3].trim() });
-            }
-        }
-        lines.sort((a, b) => a.time - b.time);
-        parsedLyrics.current = lines;
-    }, [player.currentTrack?.lyrics]);
+        let cancelled = false;
+        const id = player.currentTrack?.id || "";
+        const songId = /^netease_(\d+)$/.exec(id)?.[1];
+        setBrowsingLyrics(false);
+        setShowMore(false);
+        if (songId) getNeteaseLyricBundle(Number(songId)).then(bundle => {
+            if (!cancelled) setLyricBundle({ id, ...bundle });
+        });
+        return () => { cancelled = true; };
+    }, [player.currentTrack?.id]);
 
     useEffect(() => {
         const lyrics = parsedLyrics.current;
@@ -259,31 +262,29 @@ export default function MusicPlayer() {
             }
         }
         setActiveLyricIdx(idx);
-    }, [player.currentTime]);
+    }, [player.currentTime, parsedLyrics]);
 
     // Auto-scroll lyrics
     useEffect(() => {
-        if (view !== "lyrics" || activeLyricIdx < 0 || !lyricsContainerRef.current) return;
+        if (view !== "lyrics" || browsingLyrics || activeLyricIdx < 0 || !lyricsContainerRef.current) return;
         const el = lyricsContainerRef.current.children[activeLyricIdx] as HTMLElement;
         if (el) scrollElementWithinContainer(lyricsContainerRef.current, el, { behavior: "smooth", block: "center" });
-    }, [activeLyricIdx, view]);
+    }, [activeLyricIdx, view, browsingLyrics, showTranslation]);
 
     const handleLyricClick = useCallback((idx: number, e: React.MouseEvent) => {
         e.stopPropagation();
+        if (lyricPress.current.shared) { lyricPress.current.shared = false; return; }
         const line = parsedLyrics.current[idx];
-        if (line) player.seek(line.time);
-    }, [player]);
+        if (line) { player.seek(Math.max(0, line.time)); setBrowsingLyrics(false); }
+    }, [player, parsedLyrics]);
 
-    const [liked, setLiked] = useState(false);
+    useEffect(() => () => { if (lyricPress.current.timer) clearTimeout(lyricPress.current.timer); }, []);
+
     const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
     const [playlists, setPlaylists] = useState<NeteasePlaylist[]>([]);
     const [loadingPlaylists, setLoadingPlaylists] = useState(false);
     const [addResult, setAddResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-    // Sync liked state with current track
-    useEffect(() => {
-        setLiked(player.currentTrack?.liked ?? false);
-    }, [player.currentTrack?.id, player.currentTrack?.liked]);
 
     // Clear add result after 2s
     useEffect(() => {
@@ -292,29 +293,6 @@ export default function MusicPlayer() {
         return () => clearTimeout(t);
     }, [addResult]);
 
-    const handleLike = useCallback(async () => {
-        if (!player.currentTrack) return;
-        const newLiked = !liked;
-        setLiked(newLiked);
-        if (newLiked) {
-            // For Netease tracks, open playlist picker to add to a playlist
-            if (isNeteaseTrack && isNeteaseConfigured()) {
-                setShowPlaylistPicker(true);
-                setLoadingPlaylists(true);
-                getUserPlaylists().then(p => { setPlaylists(p); setLoadingPlaylists(false); });
-            }
-        } else {
-            // Unlike — remove from Netease playlist if previously added
-            if (isNeteaseTrack && neteaseId) {
-                const pid = getTrackPlaylistId(neteaseId);
-                if (pid) {
-                    const result = await removeTracksFromPlaylist(pid, [neteaseId]);
-                    removeTrackPlaylistRecord(neteaseId);
-                    setAddResult(result);
-                }
-            }
-        }
-    }, [liked, player.currentTrack, isNeteaseTrack, neteaseId]);
 
     const handleAddToPlaylist = useCallback(async (playlist: NeteasePlaylist) => {
         if (!neteaseId) return;
@@ -353,7 +331,6 @@ export default function MusicPlayer() {
     }, [player.currentTrack, isNeteaseTrack, neteaseId, showMusicToast]);
 
     const track = player.currentTrack;
-    const waveBars = useMemo(() => waveHeights(track?.id || "lumen"), [track?.id]);
 
     const getAdjacentTrack = (direction: "prev" | "next") => {
         if (player.queue.length === 0 || !player.currentTrack) return null;
@@ -418,7 +395,7 @@ export default function MusicPlayer() {
     } as React.CSSProperties;
 
     return (
-        <div className="music-player mp-lumen" style={ambientVars}>
+        <div className="music-player mp-lumen mp-spotify" data-view={view} data-companion-motion={companionMotion} style={ambientVars} onKeyDown={e => { if (e.key === "Escape") setShowMore(false); }}>
             {musicToast && (
                 <div className="music-toast-overlay">
                     <div className="music-toast-chip">
@@ -445,46 +422,46 @@ export default function MusicPlayer() {
                 <span className="mp-vignette" />
             </div>
 
-            {/* Header */}
+            {/* Header: secondary actions live in a compact popover. */}
             <div className="mp-top">
-                <button className="music-player-close" onClick={player.closeFullPlayer}>
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                        <path d="M15 19 8 12l7-7" />
-                    </svg>
+                <button className="music-player-close" aria-label={view === "lyrics" ? "返回封面" : "收起播放器"} onClick={() => view === "lyrics" ? setView("cover") : player.closeFullPlayer()}>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m5 9 7 7 7-7" /></svg>
                 </button>
-                <div className="mp-titles">
-                    <div className="mp-song" {...(view === "lyrics" ? { "data-glow": "" } : {})}>{track.title}</div>
-                    <button className="mp-artist" onClick={openArtistPage}>
-                        {track.artist || "未知歌手"}
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m9 5 7 7-7 7" /></svg>
-                    </button>
-                </div>
-                <div className="mp-top-actions">
-                    <button className="music-player-ctrl-btn mp-top-btn" onClick={togglePlayerStyle} title={playerStyle === "vinyl" ? "切换现代样式" : "切换黑胶样式"}>
-                        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                            <circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
-                        </svg>
-                    </button>
-                    <button className="music-player-ctrl-btn mp-top-btn" onClick={openMiniChat} title="聊天小窗">
-                        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                        </svg>
-                    </button>
-                    <button className="music-player-ctrl-btn mp-top-btn" onClick={openShareViaChat} title="分享到聊天">
-                        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
-                            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                        </svg>
-                    </button>
-                </div>
+                <div className="np-source"><small>{view === "lyrics" ? "正在播放 · 歌词" : "正在播放"}</small><strong title={view === "lyrics" ? track.title : track.playbackSource || "当前播放队列"}>{view === "lyrics" ? track.title : track.playbackSource || "当前播放队列"}</strong></div>
+                <button className="music-player-ctrl-btn mp-top-btn" aria-label="更多音乐功能" aria-expanded={showMore} onClick={() => setShowMore(value => !value)}>
+                    <svg width="23" height="23" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>
+                </button>
             </div>
+            {showMore && <>
+                <button className="np-menu-backdrop" aria-label="关闭更多菜单" onClick={() => setShowMore(false)} />
+                <div className="np-menu">
+                    <button onClick={() => { setShowMore(false); openCompanionRecords(); }}>一起听过的时光</button>
+                    <button onClick={() => {
+                        const next: CompanionWindowMotion = companionMotion === "on" ? "auto" : companionMotion === "auto" ? "off" : "on";
+                        setCompanionMotion(next); kvSet(COMPANION_MOTION_KEY, next);
+                    }}>陪听窗口动画：{companionMotion === "on" ? "开启" : companionMotion === "auto" ? "跟随系统" : "关闭"}</button>
+                    <button onClick={() => { togglePlayerStyle(); setShowMore(false); }}>{playerStyle === "vinyl" ? "使用方形封面" : "使用黑胶封面"}</button>
+                    <button onClick={() => { openMiniChat(); setShowMore(false); }}>聊天小窗</button>
+                    <button onClick={() => { setShowMore(false); if (!isNeteaseTrack) { showMusicToast("本地歌曲暂不支持云端歌单"); return; } setShowPlaylistPicker(true); setLoadingPlaylists(true); getUserPlaylists().then(setPlaylists).finally(() => setLoadingPlaylists(false)); }}>收藏到其他歌单</button>
+                    <button onClick={() => { void openArtistPage(); setShowMore(false); }}>歌手主页</button>
+                    <button onClick={() => { openShareViaChat(); setShowMore(false); }}>分享到聊天</button>
+                </div>
+            </>}
 
             {/* Body — cover / vinyl / glow lyrics */}
             <div className="mp-body">
                 {view === "lyrics" ? (
-                    <div className="mp-lyrics-wrap" onClick={() => setView("cover")}>
+                    <div className="mp-lyrics-wrap">
+                        <div className="np-lyrics-toolbar">
+                            <span>{parsedLyrics.current.some(line => line.translation) ? "双语歌词" : "原文歌词 · 暂无翻译"}</span>
+                            {companion.session && <button className="np-share-lyric" disabled={!activeLyricText} onClick={() => {
+                                const line = parsedLyrics.current[activeLyricIdx];
+                                if (line?.text) shareCompanionLyric([line.text, line.translation].filter(Boolean).join("\n"));
+                            }}>给 TA 看这句</button>}
+                            <button type="button" aria-pressed={showTranslation} disabled={!parsedLyrics.current.some(line => line.translation)} onClick={() => setShowTranslation(value => !value)}>译</button>
+                        </div>
                         {hasLyrics ? (
-                            <div className="mp-lyrics" ref={lyricsContainerRef}>
+                            <div className="mp-lyrics" ref={lyricsContainerRef} onWheel={() => setBrowsingLyrics(true)} onTouchMove={() => setBrowsingLyrics(true)} onKeyDown={e => { if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End"].includes(e.key)) setBrowsingLyrics(true); }} tabIndex={0} aria-label="歌曲歌词">
                                 {parsedLyrics.current.map((line, i) => {
                                     const dist = Math.abs(i - activeLyricIdx);
                                     return (
@@ -493,8 +470,31 @@ export default function MusicPlayer() {
                                             className="mp-lyric-line"
                                             {...(i === activeLyricIdx ? { "data-active": "" } : dist === 1 ? { "data-near": "" } : {})}
                                             onClick={(e) => handleLyricClick(i, e)}
+                                            onPointerDown={event => {
+                                                if (lyricPress.current.timer) clearTimeout(lyricPress.current.timer);
+                                                lyricPress.current = { timer: null, x: event.clientX, y: event.clientY, shared: false };
+                                                if (!companion.session || !line.text || event.button !== 0) return;
+                                                lyricPress.current.timer = setTimeout(() => {
+                                                    lyricPress.current.shared = true;
+                                                    shareCompanionLyric([line.text, line.translation].filter(Boolean).join("\n"));
+                                                }, 550);
+                                            }}
+                                            onPointerMove={event => {
+                                                const press = lyricPress.current;
+                                                if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > 7 && press.timer) clearTimeout(press.timer);
+                                            }}
+                                            onPointerUp={() => { if (lyricPress.current.timer) clearTimeout(lyricPress.current.timer); }}
+                                            onPointerCancel={() => { if (lyricPress.current.timer) clearTimeout(lyricPress.current.timer); }}
+                                            onContextMenu={event => {
+                                                if (!companion.session || !line.text) return;
+                                                event.preventDefault();
+                                                if (lyricPress.current.timer) clearTimeout(lyricPress.current.timer);
+                                                if (!lyricPress.current.shared) shareCompanionLyric([line.text, line.translation].filter(Boolean).join("\n"));
+                                                lyricPress.current.shared = true;
+                                            }}
                                         >
-                                            {line.text || " "}
+                                            <span className="np-lyric-original">{line.text || "♪"}</span>
+                                            {showTranslation && line.translation && <span className="np-lyric-translation">{line.translation}</span>}
                                         </div>
                                     );
                                 })}
@@ -504,6 +504,7 @@ export default function MusicPlayer() {
                                 <div className="mp-lyric-line" data-active="">暂无歌词</div>
                             </div>
                         )}
+                        {browsingLyrics && <button className="np-lyrics-resume" onClick={() => setBrowsingLyrics(false)}>回到当前句</button>}
                     </div>
                 ) : playerStyle === "vinyl" ? (
                     <div className="music-player-vinyl-area" onClick={() => setView("lyrics")}>
@@ -556,25 +557,42 @@ export default function MusicPlayer() {
                 )}
             </div>
 
-            {/* Waveform progress */}
+            {view === "cover" && <div className="np-details">
+                <div className="mp-titles">
+                    <div className="mp-song" title={track.title}>{track.title}</div>
+                    <button className="mp-artist" onClick={openArtistPage}>{track.artist || "未知歌手"}<span aria-hidden="true"> ›</span></button>
+                </div>
+                <CloudLikeButton key={track.id} track={track} />
+            </div>}
+
+            {/* Seekable thin progress rail */}
             <div className="mp-progress-area">
                 <div
                     ref={progressRef}
-                    className="mp-wave"
+                    className="np-progress"
+                    role="slider"
+                    tabIndex={0}
+                    aria-label="歌曲播放进度"
+                    aria-valuemin={0}
+                    aria-valuemax={player.duration || 0}
+                    aria-valuenow={Math.max(0, Math.min(player.duration || 0, currentTime))}
+                    aria-valuetext={`${formatTime(currentTime)} / ${formatTime(player.duration)}`}
+                    onKeyDown={e => {
+                        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+                        e.preventDefault();
+                        const nextTime = e.key === "Home" ? 0 : e.key === "End" ? player.duration : currentTime + (e.key === "ArrowLeft" ? -5 : 5);
+                        player.seek(Math.max(0, Math.min(player.duration || 0, nextTime)));
+                    }}
                     onPointerDown={handleProgressDown}
                     onPointerMove={handleProgressMove}
                     onPointerUp={handleProgressUp}
                     onPointerCancel={handleProgressUp}
                 >
-                    {waveBars.map((h, i) => {
-                        const lit = (i + 0.5) / WAVE_BAR_COUNT <= progress;
-                        const head = Math.abs((i + 0.5) / WAVE_BAR_COUNT - progress) < 0.5 / WAVE_BAR_COUNT;
-                        return <i key={i} style={{ height: `${h}px` }} {...(head ? { "data-head": "" } : lit ? { "data-lit": "" } : {})} />;
-                    })}
+                    <span className="np-progress-rail"><span style={{ width: `${Math.max(0, Math.min(1, progress)) * 100}%` }} /><i style={{ left: `${Math.max(0, Math.min(1, progress)) * 100}%` }} /></span>
                 </div>
                 <div className="mp-times">
                     <span>{formatTime(currentTime)}</span>
-                    <span>{formatTime(player.duration)}</span>
+                    <span>-{formatTime(Math.max(0, player.duration - currentTime))}</span>
                 </div>
             </div>
 
@@ -616,40 +634,19 @@ export default function MusicPlayer() {
                 </button>
             </div>
 
-            {/* Social row: like / comments / share */}
             <div className="mp-social">
-                <button className="mp-social-btn" {...(liked ? { "data-liked": "" } : {})} onClick={handleLike}>
-                    {liked ? (
-                        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-                        </svg>
-                    ) : (
-                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-                        </svg>
-                    )}
-                    <span>喜欢</span>
+                <MusicCompanion track={track} currentTime={player.currentTime} isPlaying={player.isPlaying} onTogglePlay={player.togglePlay} onNext={handleNext} backgroundStyle={customBg} />
+                <button className="mp-social-btn np-social-icon" onClick={openShareViaChat} aria-label="分享歌曲" title="分享歌曲">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M12 16V3m-4 4 4-4 4 4M5 13v7h14v-7" /></svg>
                 </button>
-                <button
-                    className="mp-social-btn"
-                    onClick={() => {
-                        if (!isNeteaseTrack) { showMusicToast("本地歌曲暂无评论区"); return; }
-                        setShowComments(true);
-                    }}
-                >
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                        <path d="M21 12a8.5 8.5 0 0 1-12.4 7.6L4 21l1.5-4.3A8.5 8.5 0 1 1 21 12z" />
-                    </svg>
-                    <span>{commentTotal > 0 ? formatCount(commentTotal) : "评论"}</span>
-                </button>
-                <button className="mp-social-btn" onClick={openShareViaChat}>
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
-                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                    </svg>
-                    <span>分享</span>
+                <button className="mp-social-btn np-social-icon" onClick={() => { if (!isNeteaseTrack) { showMusicToast("本地歌曲暂无评论区"); return; } setShowComments(true); }} aria-label="歌曲评论" title={commentTotal > 0 ? `歌曲评论 · ${formatCount(commentTotal)}` : "歌曲评论"}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a8.5 8.5 0 0 1-12.4 7.6L4 21l1.5-4.3A8.5 8.5 0 1 1 21 12z" /></svg>
                 </button>
             </div>
+            {view === "cover" && <button className="np-lyrics-preview" onClick={() => { setBrowsingLyrics(false); setView("lyrics"); }}>
+                <span><strong>歌词</strong><small>{activeLyricText || (hasLyrics ? "跟随音乐，查看完整歌词" : "查看歌词")}</small></span>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4" /></svg>
+            </button>}
 
             {/* Queue drawer */}
             {showQueue && (
