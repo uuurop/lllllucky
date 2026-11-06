@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMusicPlayerOptional } from "@/lib/music-context";
-import { companionDuration, requestCompanionRoom } from "@/lib/music-companion";
+import { companionDuration, requestCompanionRoom, isCompanionConnected } from "@/lib/music-companion";
 import { companionMessagePreview } from "@/lib/music-companion-messages";
 import { companionFloatBounds, placeCompanionFloat, type CompanionDock } from "@/lib/music-companion-float";
 import { kvGet, kvSet, registerKvMigration } from "@/lib/kv-db";
@@ -27,7 +27,7 @@ export default function MusicCompanionFloat() {
     const suppressClick = useRef(false);
     const [preview, setPreview] = useState("");
     const seenReply = useRef("");
-    const visible = loaded && !!session && !!player?.currentTrack && !panelOpen && !roomRequested;
+    const visible = loaded && isCompanionConnected(session) && !!player?.currentTrack && !panelOpen && !roomRequested;
     const width = Math.min(preview ? 228 : 122, phone?.clientWidth || 375);
     const height = preview ? 88 : 42;
     const lastReply = session?.messages.filter(message => message.role === "assistant").at(-1);

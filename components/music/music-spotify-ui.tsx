@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMusicPlayer } from "@/lib/music-context";
 import type { MusicControlsValue } from "@/lib/music-context";
 import type { NeteaseSearchResult } from "@/lib/music-service";
-import { requestCompanionRoom } from "@/lib/music-companion";
+import { requestCompanionRoom, isCompanionConnected } from "@/lib/music-companion";
 import { useMusicCompanion } from "./music-companion";
 import { CloudLikeButton } from "./music-desktop-lyrics";
 
@@ -77,7 +77,7 @@ export function SpotifyMiniPlayer() {
     if (!track) return null;
     const progress = player.duration > 0 ? Math.max(0, Math.min(100, player.currentTime / player.duration * 100)) : 0;
     return <div className="spt-mini-player">
-        <button className="spt-mini-main" aria-label={`打开播放器：${track.title}`} onClick={player.openFullPlayer}><SpotifyCover src={track.coverUrl} name={track.title} /><span><b>{track.title}<i> · {track.artist}</i></b><small>{companion.session ? `和 ${companion.session.name} 一起听` : "当前播放"}</small></span></button>
+        <button className="spt-mini-main" aria-label={`打开播放器：${track.title}`} onClick={player.openFullPlayer}><SpotifyCover src={track.coverUrl} name={track.title} /><span><b>{track.title}<i> · {track.artist}</i></b><small>{companion.session ? isCompanionConnected(companion.session) ? `和 ${companion.session.name} 一起听` : companion.session.invitation?.status === "failed" ? "一起听邀请未连接" : `正在邀请 ${companion.session.name}` : "当前播放"}</small></span></button>
         {companion.session ? <button className="spt-icon" aria-label="打开一起听聊天室" onClick={() => { requestCompanionRoom(); player.openFullPlayer(); }}><SpotifyIcon name="headphones" size={21} /></button> : <CloudLikeButton key={track.id} track={track} />}
         <button className="spt-icon spt-mini-play" aria-label={player.isPlaying ? "暂停" : "播放"} onClick={player.togglePlay}><SpotifyIcon name={player.isPlaying ? "pause" : "play"} size={22} /></button>
         <span className="spt-mini-progress"><i style={{ width: `${progress}%` }} /></span>

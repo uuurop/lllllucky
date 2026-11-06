@@ -32,17 +32,23 @@ function safeColor(value: unknown, fallback: string): string {
 export type CompanionMessage = { id: string; role: "user" | "assistant"; text: string; song: string; at: number; quote?: string;
     context?: { trackId: string; artist: string; excerpt: string; position: number; kind: "greeting" | "automatic" | "reply" } };
 export type CompanionTrack = { id: string; title: string; artist: string };
+export type CompanionInvitation = {
+    id: string; status: "inviting" | "connected" | "failed";
+    inviterName: string; invitedAt: number; joinedAt?: number; initialTrack: CompanionTrack;
+};
 export type CompanionSession = {
     id: string; characterId: string; name: string; avatar: string | null;
     startedAt: number; seconds: number; mode: CompanionMode;
     tracks: CompanionTrack[]; messages: CompanionMessage[]; currentTrackId: string;
     userName?: string;
+    invitation?: CompanionInvitation;
 };
 export type CompanionRecord = {
     id: string; characterId: string; name: string; startedAt: number; endedAt: number;
     seconds: number; tracks: CompanionTrack[]; quote: string; interrupted?: boolean;
     messages?: CompanionMessage[]; userName?: string;
     summary?: string; summaryStatus?: "pending" | "ready" | "failed";
+    invitation?: CompanionInvitation;
 };
 export type CompanionState = {
     ready: boolean; session: CompanionSession | null; records: CompanionRecord[];
@@ -71,6 +77,9 @@ let pendingReply: { sessionId: string; track: MusicTrack; position: number } | n
 let userSequence = 0;
 function safeWaitSeconds(value: unknown) { return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(60, Math.round(value))) : 3; }
 export const getCompanionState = () => state;
+export function isCompanionConnected(session: CompanionSession | null | undefined): boolean {
+    return !!session && (!session.invitation || session.invitation.status === "connected");
+}
 export const getCompanionServerState = () => initial;
 export const subscribeCompanion = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 function publish(patch: Partial<CompanionState>) { state = { ...state, ...patch }; listeners.forEach(listener => listener()); }
@@ -79,7 +88,7 @@ function persist() {
     kvSet(KEY, JSON.stringify({ records: state.records, draft: state.session ? { ...state.session, avatar: null } : null, lastCharacterId: state.lastCharacterId, mode: state.mode, translationAlwaysVisible: state.translationAlwaysVisible, translationColors: state.translationColors, translationOutlineEnabled: state.translationOutlineEnabled, roomTitle: state.roomTitle, replyIntervalSeconds: state.replyIntervalSeconds, waitSeconds: state.waitSeconds }));
 }
 function record(session: CompanionSession, interrupted = false): CompanionRecord {
-    return { id: session.id, characterId: session.characterId, name: session.name, userName: session.userName, startedAt: session.startedAt, endedAt: Date.now(), seconds: session.seconds, tracks: session.tracks.map(track => ({ ...track })), messages: session.messages.map(message => ({ ...message })), quote: "", summaryStatus: session.messages.length || session.tracks.length ? "failed" : "ready", summary: session.messages.length || session.tracks.length ? "" : "这次没有播放歌曲，也没有留下聊天。", interrupted };
+    return { invitation: session.invitation, id: session.id, characterId: session.characterId, name: session.name, userName: session.userName, startedAt: session.startedAt, endedAt: Date.now(), seconds: session.seconds, tracks: session.tracks.map(track => ({ ...track })), messages: session.messages.map(message => ({ ...message })), quote: "", summaryStatus: session.messages.length || session.tracks.length ? "failed" : "ready", summary: session.messages.length || session.tracks.length ? "" : "这次没有播放歌曲，也没有留下聊天。", interrupted };
 }
 function shortSummary(text: string) {
     const chars = Array.from(text.replace(/\s+/g, " ").trim());
@@ -94,7 +103,7 @@ export function initializeCompanion() {
             records.forEach(item => { if (item.summaryStatus === "pending") item.summaryStatus = "failed"; });
             // Reloads end a session safely; they never silently restart model calls.
             const draft = saved?.draft as CompanionSession | undefined;
-            if (draft && typeof draft.id === "string" && typeof draft.name === "string" && Number.isFinite(draft.seconds) && Array.isArray(draft.tracks) && Array.isArray(draft.messages) && !records.some(item => item.id === draft.id)) records.unshift(record(draft, true));
+            if (draft && isCompanionConnected(draft) && typeof draft.id === "string" && typeof draft.name === "string" && Number.isFinite(draft.seconds) && Array.isArray(draft.tracks) && Array.isArray(draft.messages) && !records.some(item => item.id === draft.id)) records.unshift(record(draft, true));
             publish({ ready: true, records: records.slice(0, 20), lastCharacterId: typeof saved?.lastCharacterId === "string" ? saved.lastCharacterId : "", mode: saved?.mode === "quiet" ? "quiet" : "occasional", translationAlwaysVisible: saved?.translationAlwaysVisible === true,
                 translationColors: { text: safeColor(saved?.translationColors?.text, DEFAULT_COMPANION_TRANSLATION_COLORS.text), outline: safeColor(saved?.translationColors?.outline, DEFAULT_COMPANION_TRANSLATION_COLORS.outline) },
                 translationOutlineEnabled: saved?.translationOutlineEnabled !== false,
@@ -128,13 +137,31 @@ export function companionCharacterIssue(character: Character): string {
     const config = companionConfig(character.id);
     return config?.apiKey && config.defaultModel ? "" : "请先在设置 → 绑定中配置角色使用的 API";
 }
-export function startCompanion(character: Character, mode: CompanionMode) {
+export function startCompanion(character: Character, mode: CompanionMode, invitationTrack?: MusicTrack) {
     if (!state.ready || state.session) return false;
     const issue = companionCharacterIssue(character);
     if (issue) { publish({ error: issue }); return false; }
-    publish({ session: { id: `mc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, characterId: character.id, name: character.name, avatar: character.avatar, userName: resolveUserIdentity(character.id, "chat")?.name || "对方", startedAt: Date.now(), seconds: 0, mode, tracks: [], messages: [], currentTrackId: "" }, lastCharacterId: character.id, mode, error: "", busy: false, roomRequested: false });
+    const now = Date.now();
+    const id = `mc_${now}_${Math.random().toString(36).slice(2, 8)}`;
+    const userName = resolveUserIdentity(character.id, "chat")?.name || "对方";
+    const invitation: CompanionInvitation | undefined = invitationTrack ? {
+        id: `invite_${id}`, status: "inviting", inviterName: userName, invitedAt: now,
+        initialTrack: { id: invitationTrack.id, title: invitationTrack.title, artist: invitationTrack.artist },
+    } : undefined;
+    publish({ session: { id, characterId: character.id, name: character.name, avatar: character.avatar, userName, startedAt: now, seconds: 0, mode, tracks: [], messages: [], currentTrackId: "", invitation }, lastCharacterId: character.id, mode, error: "", busy: false, roomRequested: false });
     persist();
     return true;
+}
+export function cancelCompanionInvitation() {
+    if (!state.session || isCompanionConnected(state.session)) return;
+    cancelReply(); publish({ session: null, busy: false, error: "", roomRequested: false }); persist();
+}
+export function retryCompanionInvitation(track: MusicTrack, position: number) {
+    const session = state.session;
+    if (!session?.invitation || session.invitation.status !== "failed" || state.busy) return;
+    cancelReply();
+    publish({ session: { ...session, invitation: { ...session.invitation, status: "inviting" } }, error: "", busy: false }); persist();
+    void askCompanion(track, position, { greeting: true });
 }
 export function setCompanionMode(mode: CompanionMode) {
     publish({ mode, session: state.session ? { ...state.session, mode } : null });
@@ -175,7 +202,7 @@ function schedulePendingReply() {
     }, Math.max(0, lastActivity + state.waitSeconds * 1000 - Date.now()));
 }
 export function noteCompanionInput(composing = false) {
-    if (!state.session) return;
+    if (!isCompanionConnected(state.session)) return;
     lastActivity = Date.now();
     if (waitTimer) clearTimeout(waitTimer);
     waitTimer = null;
@@ -195,7 +222,7 @@ export function releaseCompanionInput() {
 export function queueCompanionMessage(track: MusicTrack, position: number, options: { text?: string; quote?: string }) {
     const session = state.session;
     const text = options.text?.trim().slice(0, 500) || (options.quote ? "想把这句歌词分享给你。" : "");
-    if (!session || !text) return false;
+    if (!session || !isCompanionConnected(session) || !text) return false;
     cancelReply();
     append({ id: `u_${Date.now()}_${++userSequence}`, role: "user", text, song: track.title, at: Date.now(), quote: options.quote?.slice(0, 600) });
     lastActivity = Date.now();
@@ -214,7 +241,7 @@ export function setCompanionTranslationColors(colors: Partial<CompanionTranslati
 export function clearCompanionError() { publish({ error: "" }); }
 export function tickCompanion(track: MusicTrack, elapsed: number) {
     const session = state.session;
-    if (!session) return;
+    if (!session || !isCompanionConnected(session)) return;
     const seconds = session.seconds + Math.max(0, Math.min(5, elapsed));
     const tracks = session.tracks.some(item => item.id === track.id) ? session.tracks : [...session.tracks, { id: track.id, title: track.title, artist: track.artist }].slice(-100);
     publish({ session: { ...session, seconds, tracks, currentTrackId: track.id } });
@@ -223,6 +250,7 @@ export function tickCompanion(track: MusicTrack, elapsed: number) {
 export function finishCompanion() {
     const session = state.session;
     if (!session) return null;
+    if (!isCompanionConnected(session)) { cancelCompanionInvitation(); return null; }
     cancelReply();
     const result = record(session);
     publish({ session: null, records: [result, ...state.records].slice(0, 20), busy: false, error: "", roomRequested: false });
@@ -307,13 +335,20 @@ function waitForContext<T>(operation: Promise<T>, signal: AbortSignal): Promise<
 export async function askCompanion(track: MusicTrack, currentTime: number, options: { text?: string; quote?: string; greeting?: boolean; automatic?: boolean; regenerateId?: string; queued?: boolean } = {}) {
     const session = state.session;
     if (!session || state.busy) return;
+    const connecting = session.invitation?.status === "inviting" && options.greeting && !options.regenerateId;
+    if (!isCompanionConnected(session) && !connecting) return;
+    const failInvitation = (error: string) => {
+        const current = state.session;
+        publish({ error, ...(connecting && current?.id === session.id && current.invitation?.status === "inviting" ? { session: { ...current, invitation: { ...current.invitation, status: "failed" as const } } } : {}) });
+        persist();
+    };
     if (!options.queued && (state.waiting || state.userTyping)) return;
     const regenerateIndex = options.regenerateId ? session.messages.findIndex(message => message.id === options.regenerateId && message.role === "assistant") : -1;
     if (options.regenerateId && regenerateIndex < 0) return;
     const character = loadCharacters().find(item => item.id === session.characterId);
-    if (!character) { publish({ error: "角色已被移除，请结束本次陪听后重新选择。" }); return; }
+    if (!character) { failInvitation("角色已被移除，请取消邀请后重新选择。"); return; }
     const config = companionConfig(character.id);
-    if (!config || companionCharacterIssue(character)) { publish({ error: "角色的 API 或人设尚未配置好，请检查设置 → 绑定。" }); return; }
+    if (!config || companionCharacterIssue(character)) { failInvitation("角色的 API 或人设尚未配置好，请检查设置 → 绑定。"); return; }
     const text = options.text?.trim().slice(0, 500) || (options.quote ? "想把这句歌词分享给你。" : "");
     if (text) append({ id: `u_${Date.now()}`, role: "user", text, song: track.title, at: Date.now(), quote: options.quote?.slice(0, 600) });
     publish({ busy: true, error: "" });
@@ -328,6 +363,7 @@ export async function askCompanion(track: MusicTrack, currentTime: number, optio
         const excerpt = lines.slice(Math.max(0, active - 1), Math.max(0, active - 1) + 4).map(line => line.text).join(" / ").slice(0, 500) || (track.lyrics || "").slice(0, 300);
         const system = [
             `你是${character.name}，正在虚拟手机里和对方一起听音乐。这是你们普通聊天的延续，保持同一个角色的语言、语气、关系和说话习惯。`,
+            session.invitation ? `【本次邀请事实】${session.invitation.inviterName}在${new Date(session.invitation.invitedAt).toISOString()}主动邀请你一起听《${session.invitation.initialTrack.title}》（${session.invitation.initialTrack.artist || "未知歌手"}）。${connecting ? "这是你对加入邀请的首次回应；加入由应用确认，你只负责用角色自己的口吻回应邀请并自然衔接一起听，不输出程序状态或设备操作。" : `你已于${new Date(session.invitation.joinedAt || session.startedAt).toISOString()}回应并加入同一场陪听。目前仍在这个会话里，不必重复欢迎或重新回应邀请。`}邀请时歌曲与下面当前歌曲可能不同，不能混淆。` : "",
             `当前歌曲：《${track.title}》，歌手：${track.artist || "未知"}。播放到${Math.floor(currentTime)}秒。`,
             excerpt ? `此刻附近的歌词：${excerpt}` : "这首歌没有可用歌词。",
             options.quote ? `对方分享给你的歌词（引用内容）：${options.quote.slice(0, 600)}` : "",
@@ -358,6 +394,10 @@ export async function askCompanion(track: MusicTrack, currentTime: number, optio
         const parts = splitCompanionText(content).map(part => part.translated ? `${part.original}|${part.translated}` : part.original);
         if (options.automatic && previous.some(message => message.text === content)) return;
         clearTimeout(timeout);
+        if (connecting && state.session.invitation) {
+            const joinedAt = Date.now();
+            publish({ session: { ...state.session, startedAt: joinedAt, invitation: { ...state.session.invitation, status: "connected", joinedAt } } }); persist();
+        }
         const message: CompanionMessage = { id: `a_${Date.now()}_${token}`, role: "assistant", text: parts.length > 1 ? parts[0] : content, song: track.title, at: Date.now(), context: { trackId: track.id, artist: track.artist, excerpt, position: currentTime, kind: options.greeting ? "greeting" : options.automatic ? "automatic" : "reply" } };
         if (options.regenerateId) {
             const target = state.session.messages[regenerateIndex];
@@ -377,7 +417,7 @@ export async function askCompanion(track: MusicTrack, currentTime: number, optio
             publish({ session: { ...state.session, messages: state.session.messages.map(item => item.id === message.id ? { ...item, text: index === parts.length - 1 ? content : parts.slice(0, index + 1).join("\n\n") } : item) } }); persist();
         }
     } catch (error) {
-        if (token === requestToken && state.session?.id === session.id) publish({ error: controller.signal.aborted ? "这次回应超时了，可以稍后重试。" : error instanceof Error ? error.message : "连接失败，请稍后重试。" });
+        if (token === requestToken && state.session?.id === session.id) failInvitation(controller.signal.aborted ? "这次回应超时了，可以稍后重试。" : error instanceof Error ? error.message : "连接失败，请稍后重试。");
     } finally {
         clearTimeout(timeout);
         if (token === requestToken) { request = null; publish({ busy: false }); }

@@ -154,7 +154,7 @@ export default function MusicDesktopLyrics({ hidden = false }: { hidden?: boolea
     };
     const lyricStyle = {
         color: appearance.color,
-        textShadow: appearance.color === "#202124" ? "0 1px 2px rgba(255,255,255,.8)" : "0 1px 3px #000",
+        textShadow: appearance.color === "#202124" ? "0 1px 1px rgba(255,255,255,.35)" : "0 1px 2px rgba(0,0,0,.25)",
     };
     if (!visible || !track || hidden) return null;
     return <div ref={root} className="music-desktop-lyrics" data-locked={locked ? "" : undefined} style={{ left: position.x, top: position.y }} onPointerDown={e => {

@@ -13,6 +13,7 @@ import {
     saveCompanionDraft, setCompanionMode, setCompanionPanelOpen, setCompanionTranslationAlwaysVisible, setCompanionTranslationColors, startCompanion, subscribeCompanion, tickCompanion,
     setCompanionTranslationOutline, setCompanionRoomTitle, setCompanionReplyInterval, summarizeCompanionRecord,
     queueCompanionMessage, noteCompanionInput, releaseCompanionInput, setCompanionWaitSeconds,
+    isCompanionConnected, cancelCompanionInvitation, retryCompanionInvitation,
     type CompanionMessage, type CompanionMode, type CompanionRecord,
 } from "@/lib/music-companion";
 import { companionMessagePreview, splitCompanionText, type CompanionTextPart } from "@/lib/music-companion-messages";
@@ -34,7 +35,7 @@ export function MusicCompanionRuntime() {
     const snapshot = useMusicCompanion();
     const playerRef = useRef(player);
     playerRef.current = player;
-    const sessionId = snapshot.session?.id;
+    const sessionId = isCompanionConnected(snapshot.session) ? snapshot.session?.id : undefined;
     const mode = snapshot.session?.mode;
     useEffect(() => {
         void initializeCompanion();
@@ -159,6 +160,7 @@ export default function MusicCompanion({ track, currentTime, isPlaying, onToggle
 }) {
     const snapshot = useMusicCompanion();
     const { session, busy, error } = snapshot;
+    const connected = isCompanionConnected(session);
     const translationStyle = { "--mc-translation-color": snapshot.translationColors.text, "--mc-translation-outline": snapshot.translationOutlineEnabled ? snapshot.translationColors.outline : "transparent" } as CSSProperties;
     const [colorsOpen, setColorsOpen] = useState(false);
     const [waitOpen, setWaitOpen] = useState(false);
@@ -259,8 +261,7 @@ export default function MusicCompanion({ track, currentTime, isPlaying, onToggle
     const activeCharacter = characters.find(character => character.id === selected);
     const issue = activeCharacter ? companionCharacterIssue(activeCharacter) : "";
     const start = () => {
-        if (!activeCharacter || !startCompanion(activeCharacter, mode)) return;
-        tickCompanion(track, 0);
+        if (!activeCharacter || !startCompanion(activeCharacter, mode, track)) return;
         setSheet("chat");
         void askCompanion(track, currentTime, { greeting: true });
     };
@@ -278,12 +279,12 @@ export default function MusicCompanion({ track, currentTime, isPlaying, onToggle
         setSheet("summary");
         setQuote(""); setDraft("");
     };
-    const title = sheet === "invite" ? "让音乐，多一个人听" : sheet === "chat" ? snapshot.roomTitle : sheet === "records" ? "一起听过的时光" : "把这一刻留下来";
+    const title = sheet === "invite" ? "让音乐，多一个人听" : sheet === "chat" ? connected ? snapshot.roomTitle : `邀请 ${session?.name || "TA"} 一起听` : sheet === "records" ? "一起听过的时光" : "把这一刻留下来";
     return <>
         <div ref={entry} className="mc-social-entry">
             <button className="mc-social-invite" disabled={!snapshot.ready} aria-expanded={!!sheet} aria-controls="music-companion-sheet" onClick={() => setSheet(session ? "chat" : "invite")}>
                 <Headphones size={18} />
-                <span>{session ? `和 ${session.name} 一起听` : "邀请 TA 一起听"}</span>
+                <span>{session ? connected ? `和 ${session.name} 一起听` : session.invitation?.status === "failed" ? `邀请 ${session.name} 未连接` : `正在邀请 ${session.name}` : "邀请 TA 一起听"}</span>
             </button>
         </div>
         {sheet && overlayHost && createPortal(<div className="mc-mask" data-motion={motion || undefined} onClick={() => setSheet(null)} onKeyDown={event => {
@@ -298,7 +299,7 @@ export default function MusicCompanion({ track, currentTime, isPlaying, onToggle
         }}>
             <section ref={dialog} id="music-companion-sheet" className={`mc-sheet mc-sheet-${sheet}`} data-motion={motion || undefined} style={backgroundStyle} role="dialog" aria-modal="true" aria-label={title} onClick={event => event.stopPropagation()}>
                 <span className="mc-handle" aria-hidden="true" />
-                <header className="mc-sheet-head"><div><small>LISTEN TOGETHER</small><h2>{sheet === "chat" ? <EditableCompanionTitle title={title} /> : title}</h2></div><button className="mc-icon-button" onClick={() => setSheet(null)} aria-label="收起陪听面板"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 9 6 6 6-6" /></svg></button></header>
+                <header className="mc-sheet-head"><div><small>LISTEN TOGETHER</small><h2>{sheet === "chat" && connected ? <EditableCompanionTitle title={title} /> : title}</h2></div><button className="mc-icon-button" onClick={() => setSheet(null)} aria-label="收起陪听面板"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 9 6 6 6-6" /></svg></button></header>
                 {sheet === "invite" && <>
                     <div className="mc-scroll">
                         <div className="mc-invite-preview"><span className="mc-pair mc-pair-large"><Avatar src={identity?.avatarUrl} name="我" /><Avatar src={activeCharacter?.avatar} name={activeCharacter?.name || "TA"} /></span><strong>和 {activeCharacter?.name || "TA"}，从这首歌开始</strong><span>《{track.title}》 · {track.artist}</span></div>
@@ -309,14 +310,25 @@ export default function MusicCompanion({ track, currentTime, isPlaying, onToggle
                         <ModePicker mode={mode} onChange={setMode} />
                         <p className="mc-note">收起面板后陪听仍会继续。TA 优先使用角色的音乐 API，未单独配置时使用全局 API。</p>
                     </div>
-                    <footer className="mc-sheet-footer"><button className="mc-primary" onClick={start} disabled={!snapshot.ready || !activeCharacter || !!issue || !!session}><Headphones size={17} />{issue ? "先完善角色设置" : "开始一起听"}</button>{issue && <small className="mc-inline-note">{issue}</small>}</footer>
+                    <footer className="mc-sheet-footer"><button className="mc-primary" onClick={start} disabled={!snapshot.ready || !activeCharacter || !!issue || !!session}><Headphones size={17} />{issue ? "先完善角色设置" : "邀请 TA 一起听"}</button>{issue && <small className="mc-inline-note">{issue}</small>}</footer>
                 </>}
-                {sheet === "chat" && session && <>
+                {sheet === "chat" && session && !connected && <>
+                    <div className="mc-scroll mc-invitation-status" data-failed={session.invitation?.status === "failed" || undefined}>
+                        <span className="mc-pair mc-pair-large"><Avatar src={identity?.avatarUrl} name="我" /><Avatar src={session.avatar} name={session.name} /></span>
+                        <strong role="status">{session.invitation?.status === "failed" ? "邀请暂未接通" : `正在邀请 ${session.name}…`}</strong>
+                        <p>{session.invitation?.status === "failed" ? "还没有开始陪听，可以重试或取消。" : "等 TA 回应，再一起听这一首。"}</p>
+                        <div className="mc-invitation-song"><Headphones size={16} /><span>邀请时播放<b>《{session.invitation?.initialTrack.title || track.title}》</b></span></div>
+                        {session.invitation?.initialTrack.id !== track.id && <small>现在播放《{track.title}》</small>}
+                        {session.invitation?.status === "failed" && error && <p className="mc-invitation-error" role="alert">{error}</p>}
+                    </div>
+                    <footer className="mc-sheet-footer mc-invitation-footer"><button type="button" className="mc-secondary" onClick={() => { cancelCompanionInvitation(); setSheet("invite"); }}>取消邀请</button>{session.invitation?.status === "failed" && <button type="button" className="mc-primary" disabled={busy} onClick={() => retryCompanionInvitation(track, currentTime)}>重新邀请</button>}</footer>
+                </>}
+                {sheet === "chat" && session && connected && <>
                     <div className="mc-room-info"><span className="mc-pair"><Avatar src={identity?.avatarUrl} name="我" /><Avatar src={session.avatar} name={session.name} /></span><span><b>和 {session.name} 一起听</b><small>已陪伴 {companionDuration(session.seconds)}</small></span><button className="mc-end" onClick={() => setConfirmEnd(true)}>结束</button></div>
                     <div className="mc-room-mode"><ModePicker mode={session.mode} onChange={setCompanionMode} /></div>
                     <div className="mc-now"><div>{track.coverUrl ? <img src={track.coverUrl} alt="" /> : <Headphones size={22} />}</div><span><b>{track.title}</b><small>{track.artist || "未知歌手"}</small></span><button className="mc-icon-button" onClick={onTogglePlay} aria-label={isPlaying ? "暂停" : "播放"}>{isPlaying ? "Ⅱ" : "▶"}</button><button className="mc-icon-button" onClick={onNext} aria-label="下一首">››</button></div>
                     <div className="mc-thread" ref={thread} style={translationStyle}>
-                        <div className="mc-thread-date">陪听已开始</div>
+                        <div className="mc-thread-date">{session.invitation ? `${session.name} 已加入一起听` : "陪听已开始"}</div>
                         {session.messages.map((message, index) => <CompanionMessageGroup key={message.id} message={message} name={session.name} avatar={session.avatar} currentSong={track.title} showTranslations={snapshot.translationAlwaysVisible} laterCount={session.messages.length - index - 1} busy={busy || snapshot.waiting || snapshot.userTyping} />)}
                         {busy && <div className="mc-typing" role="status"><span /><span /><span /><small>{session.name} 正在输入</small></div>}
                         {snapshot.waiting && <div className="mc-waiting" role="status">等你说完，再慢慢回应…</div>}

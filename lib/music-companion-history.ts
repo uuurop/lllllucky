@@ -8,7 +8,7 @@ export function loadCompanionRecordsForContext(characterId: string): CompanionRe
         if (!Array.isArray(saved?.records)) return [];
         const seen = new Set<string>();
         return saved.records.filter((record: CompanionRecord) => {
-            if (!record || record.characterId !== characterId || typeof record.id !== "string" || seen.has(record.id)
+            if (!record || (record.invitation && record.invitation.status !== "connected") || record.characterId !== characterId || typeof record.id !== "string" || seen.has(record.id)
                 || !Number.isFinite(record.endedAt) || !Array.isArray(record.tracks)) return false;
             seen.add(record.id); return true;
         }).slice(0, 20);
