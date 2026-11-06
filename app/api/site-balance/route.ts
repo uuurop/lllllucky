@@ -1,202 +1,95 @@
-// 站点余额查询：代理浏览器到中转站的查余额接口，规避 CORS。
-// 账密/令牌由客户端每次请求带来，服务端不留存。
-//
-// 中转站体系繁杂，这里按主流方案依次尝试，任一成功即返回：
-//   A. 账密登录（new-api / one-api 经典体系）：
-//      POST /api/user/login 拿 session cookie → GET /api/user/self 读 quota
-//   B. 访问令牌（new-api 较新版 / Veloera 等二开，「个人设置 → 系统访问令牌」）：
-//      GET /api/user/self，Authorization: Bearer <令牌>
-//   C. OpenAI 计费端点（官方 API 与支持它的中转站，用 sk- key）：
-//      GET /v1/dashboard/billing/credit_grants + /subscription
-// quota 换算：$1 = 500000 quota。
-
+// 只使用用户选定的查询方式；凭据不留存、不跨站重定向。
 import { NextResponse } from "next/server";
-import { proxyFetch } from "@/lib/proxy-fetch";
+import { Agent, fetch as upstreamFetch } from "undici";
+import { lookup } from "node:dns";
+import { BlockList, isIP } from "node:net";
 
-const QUOTA_PER_USD = 500000;
-const FETCH_TIMEOUT_MS = 20_000;
-
-type BalanceSuccess = {
-    ok: true;
-    balanceUsd: number | null;
-    usedUsd: number | null;
-    rawQuota?: number;
-    accountName?: string;
-    /** 实际命中的查询方式，前端可提示用户 */
-    via: "password" | "token" | "openai-billing";
-};
-type BalanceFailure = { ok: false; error: string };
-type Result = BalanceSuccess | BalanceFailure;
-
-function normalizeSiteUrl(raw: string): string | null {
-    try {
-        const url = new URL(raw.trim());
-        if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-        // 只保留 origin，用户粘贴 /login、/v1 之类路径也无所谓
-        return url.origin;
-    } catch {
-        return null;
-    }
+export const runtime = "nodejs";
+const blocked = new BlockList();
+for (const [address, prefix] of [["0.0.0.0",8],["10.0.0.0",8],["100.64.0.0",10],["127.0.0.0",8],["169.254.0.0",16],["172.16.0.0",12],["192.0.0.0",24],["192.0.2.0",24],["192.168.0.0",16],["198.18.0.0",15],["198.51.100.0",24],["203.0.113.0",24],["224.0.0.0",3]] as const) blocked.addSubnet(address,prefix,"ipv4");
+function isPublicBalanceAddress(address: string): boolean {
+    if (isIP(address) === 4) return !blocked.check(address,"ipv4");
+    // 仅全球单播 IPv6；排除映射地址、隧道和保留/文档网段。
+    if (isIP(address) !== 6 || !/^[23]/i.test(address)) return false;
+    const first = parseInt(address.split(":")[0],16), second = parseInt(address.split(":")[1] || "0",16);
+    return !(first === 0x2001 && (second < 0x200 || second === 0xdb8)) && first !== 0x2002 && first !== 0x3fff;
 }
-
-async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    try {
-        return await proxyFetch(url, { ...init, signal: controller.signal });
-    } finally {
-        clearTimeout(timer);
-    }
-}
-
-function describeError(e: unknown, fallback: string): string {
-    if (e instanceof Error && e.name === "AbortError") return "连接站点超时";
-    return `${fallback}：${e instanceof Error ? e.message : String(e)}`;
-}
-
-function quotaResult(data: Record<string, unknown>, via: BalanceSuccess["via"], fallbackName: string): BalanceSuccess | null {
-    if (typeof data.quota !== "number") return null;
-    return {
-        ok: true,
-        via,
-        balanceUsd: data.quota / QUOTA_PER_USD,
-        usedUsd: typeof data.used_quota === "number" ? data.used_quota / QUOTA_PER_USD : null,
-        rawQuota: data.quota,
-        accountName: (typeof data.username === "string" && data.username)
-            || (typeof data.display_name === "string" && data.display_name)
-            || fallbackName,
-    };
-}
-
-// ── A. 账密登录（new-api / one-api）──
-async function tryPasswordLogin(origin: string, username: string, password: string): Promise<Result> {
-    let cookie = "";
-    let loginData: { success?: boolean; message?: string; data?: Record<string, unknown> } | null;
-    try {
-        const loginRes = await fetchWithTimeout(`${origin}/api/user/login`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username, password }),
-            redirect: "manual",
-        });
-        const setCookies = loginRes.headers.getSetCookie?.() ?? [];
-        cookie = setCookies.map(c => c.split(";")[0]).filter(Boolean).join("; ");
-        loginData = await loginRes.json().catch(() => null);
-        if (!loginRes.ok || loginData?.success === false) {
-            return { ok: false, error: loginData?.message || `登录失败（HTTP ${loginRes.status}）` };
-        }
-        // 有的站点登录响应体直接带 quota，可以省一次请求
-        if (!cookie && loginData?.data) {
-            const direct = quotaResult(loginData.data, "password", username);
-            if (direct) return direct;
-        }
-    } catch (e) {
-        return { ok: false, error: describeError(e, "无法连接到站点") };
-    }
-
-    if (!cookie) {
-        return { ok: false, error: "登录成功但未拿到会话凭证" };
-    }
-
-    try {
-        const selfRes = await fetchWithTimeout(`${origin}/api/user/self`, {
-            method: "GET",
-            headers: { Cookie: cookie },
-        });
-        const selfData = await selfRes.json().catch(() => null);
-        if (!selfRes.ok || selfData?.success === false || !selfData?.data) {
-            return { ok: false, error: selfData?.message || `查询账户信息失败（HTTP ${selfRes.status}）` };
-        }
-        return quotaResult(selfData.data, "password", username)
-            ?? { ok: false, error: "站点返回的账户信息里没有额度字段" };
-    } catch (e) {
-        return { ok: false, error: describeError(e, "查询余额失败") };
-    }
-}
-
-// ── B. 访问令牌（Authorization: Bearer）──
-async function tryAccessToken(origin: string, token: string): Promise<Result> {
-    try {
-        const res = await fetchWithTimeout(`${origin}/api/user/self`, {
-            method: "GET",
-            headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json().catch(() => null);
-        if (!res.ok || data?.success === false || !data?.data) {
-            return { ok: false, error: data?.message || `令牌查询失败（HTTP ${res.status}）` };
-        }
-        return quotaResult(data.data, "token", "")
-            ?? { ok: false, error: "站点返回的账户信息里没有额度字段" };
-    } catch (e) {
-        return { ok: false, error: describeError(e, "令牌查询失败") };
-    }
-}
-
-// ── C. OpenAI 计费端点（sk- key）──
-async function tryOpenAIBilling(origin: string, apiKey: string): Promise<Result> {
-    const headers = { Authorization: `Bearer ${apiKey}` };
-    try {
-        const grantsRes = await fetchWithTimeout(`${origin}/v1/dashboard/billing/credit_grants`, { headers });
-        if (!grantsRes.ok) {
-            return { ok: false, error: `计费接口查询失败（HTTP ${grantsRes.status}）` };
-        }
-        const grants = await grantsRes.json().catch(() => null);
-        const available = typeof grants?.total_available === "number" ? grants.total_available : null;
-        const used = typeof grants?.total_used === "number" ? grants.total_used : null;
-        if (available === null && used === null) {
-            return { ok: false, error: "计费接口返回格式无法识别" };
-        }
-        return { ok: true, via: "openai-billing", balanceUsd: available, usedUsd: used };
-    } catch (e) {
-        return { ok: false, error: describeError(e, "计费接口查询失败") };
-    }
-}
+const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+class QueryError extends Error {}
 
 export async function POST(request: Request) {
-    let body: { siteUrl?: string; username?: string; password?: string };
+    const reply = (data: unknown, status = 200) => NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
+    let body: unknown;
+    try { body = await request.json(); } catch { return reply({ ok:false,error:"请求体格式不正确。" },400); }
+    if (!object(body)) return reply({ok:false,error:"请求体必须是对象。"},400);
+    let origin: string;
     try {
-        body = await request.json();
-    } catch {
-        return NextResponse.json({ ok: false, error: "请求体格式不正确。" }, { status: 400 });
-    }
-
-    const origin = typeof body.siteUrl === "string" ? normalizeSiteUrl(body.siteUrl) : null;
+        const url = new URL(typeof body.siteUrl === "string" ? body.siteUrl.trim() : "");
+        const hostname = url.hostname.replace(/^\[|\]$/g,"");
+        if (!["https:","http:"].includes(url.protocol) || url.username || url.password || hostname === "localhost" || hostname.endsWith(".localhost") || (isIP(hostname) && !isPublicBalanceAddress(hostname))) throw new Error();
+        origin = url.origin;
+    } catch { return reply({ok:false,error:"请使用公开站点的 http / https 地址，不支持本机或内网地址。"},400); }
     const username = typeof body.username === "string" ? body.username.trim() : "";
     const password = typeof body.password === "string" ? body.password : "";
-    if (!origin) return NextResponse.json({ ok: false, error: "站点网址无效。" }, { status: 400 });
-    if (!username && !password) {
-        return NextResponse.json({ ok: false, error: "请填写站点的账号和密码（或令牌）。" }, { status: 400 });
+    // 旧客户端迁移：填了账号便按密码处理，不再根据密码长度猜测。
+    const method = body.method ?? (username ? "password" : /^sk-/.test(password) ? "openai-billing" : "token");
+    if (!["password","token","openai-billing"].includes(String(method))) return reply({ok:false,error:"请选择有效的查询方式。"},400);
+    if (!password.trim() || (method === "password" && !username) || username.length > 320 || password.length > 8192) return reply({ok:false,error:"请填写有效的账号和凭据。"},400);
+    const quotaPerUsd = body.quotaPerUsd ?? 500000;
+    if (!finite(quotaPerUsd) || quotaPerUsd <= 0 || quotaPerUsd > 1e15) return reply({ok:false,error:"额度换算比例必须是有效的正数。"},400);
+    const userId = typeof body.userId === "string" ? body.userId.trim() : "";
+    if (userId && !/^\d{1,20}$/.test(userId)) return reply({ok:false,error:"用户 ID 必须是数字。"},400);
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    request.signal?.addEventListener("abort",abort,{once:true});
+    if (request.signal?.aborted) abort();
+    const timeout = setTimeout(abort,20000);
+    // 在连接实际使用的 DNS 解析处校验并固定地址，避免检查后再解析导致 DNS 重绑定。
+    // 专用直连 dispatcher 不继承系统代理，确保目标地址校验不能被代理绕过。
+    const agent = new Agent({ connect: { lookup(hostname, _options, callback) {
+        lookup(hostname,{all:true,verbatim:true},(error,addresses) => {
+            if (error) { callback(error,"",4); return; }
+            if (!addresses.length || addresses.some(item => !isPublicBalanceAddress(item.address))) { callback(new Error("站点解析到了非公开地址"),"",4); return; }
+            if (typeof _options === "object" && _options.all) { callback(null,addresses); return; }
+            const selected = addresses[0]; callback(null,selected.address,selected.family);
+        });
+    } } });
+    try {
+        const read = async (path: string, headers: Record<string,string>, loginBody?: string) => {
+            const res = await upstreamFetch(origin + path,{method:loginBody ? "POST" : "GET",headers,body:loginBody,redirect:"manual",signal:controller.signal,dispatcher:agent});
+            if (!res.ok) { await res.body?.cancel(); throw new QueryError(res.status >= 300 && res.status < 400 ? "站点发生重定向，请填写最终站点地址。" : `站点返回 HTTP ${res.status}，请检查查询方式与凭据。`); }
+            // 计时覆盖 DNS、连接和完整响应体；限制意外返回的超大页面。
+            const reader = res.body?.getReader(); let text = "", bytes = 0; const decoder = new TextDecoder();
+            if (reader) { try { while (true) { const chunk = await reader.read(); if (chunk.done) break; bytes += chunk.value.byteLength; if (bytes > 1048576) { await reader.cancel(); throw new QueryError("站点响应过大，无法识别为余额信息。"); } text += decoder.decode(chunk.value,{stream:true}); } text += decoder.decode(); } finally { reader.releaseLock(); } }
+            let data: unknown; try { data = JSON.parse(text); } catch { throw new QueryError("站点未返回可识别的 JSON，请检查地址和查询方式。"); }
+            if (!object(data)) throw new QueryError("站点返回格式无法识别。");
+            if (data.success === false) throw new QueryError("站点拒绝了查询，请检查凭据、用户 ID 或额外验证要求。");
+            return {data,headers:res.headers};
+        };
+        const quota = (data: unknown) => {
+            if (!object(data) || !finite(data.quota)) throw new QueryError("站点未提供有效的额度字段。");
+            const balanceUsd = data.quota / quotaPerUsd, usedUsd = finite(data.used_quota) ? data.used_quota / quotaPerUsd : null;
+            if (!finite(balanceUsd) || (usedUsd !== null && !finite(usedUsd))) throw new QueryError("额度换算超出有效范围，请检查站点换算比例。");
+            return {ok:true,via:method,balanceUsd,usedUsd,rawQuota:data.quota,accountName:typeof data.username === "string" ? data.username : username};
+        };
+        if (method === "password") {
+            const login = await read("/api/user/login",{"Content-Type":"application/json"},JSON.stringify({username,password}));
+            const cookie = login.headers.getSetCookie().map(value => value.split(";")[0]).filter(Boolean).join("; ");
+            if (!cookie) return reply(quota(login.data.data));
+            const loginId = object(login.data.data) && (typeof login.data.data.id === "number" || typeof login.data.data.id === "string") ? String(login.data.data.id) : "";
+            const headers: Record<string,string> = {Cookie:cookie};
+            if (userId || /^\d+$/.test(loginId)) headers["New-Api-User"] = userId || loginId;
+            return reply(quota((await read("/api/user/self",headers)).data.data));
+        }
+        const headers: Record<string,string> = {Authorization:`Bearer ${password.trim()}`};
+        if (method === "token") { if (userId) headers["New-Api-User"] = userId; return reply(quota((await read("/api/user/self",headers)).data.data)); }
+        const grants = (await read("/v1/dashboard/billing/credit_grants",headers)).data;
+        if (!finite(grants.total_available) && !finite(grants.total_used)) throw new QueryError("该站点未提供兼容的余额字段，请尝试其他查询方式。");
+        return reply({ok:true,via:method,balanceUsd:finite(grants.total_available) ? grants.total_available : null,usedUsd:finite(grants.total_used) ? grants.total_used : null});
+    } catch (error) {
+        return reply({ok:false,error:controller.signal.aborted ? "查询超时或已取消，请稍后重试。" : error instanceof QueryError ? error.message : "无法连接站点，请检查公开地址、网络与查询方式。"});
+    } finally {
+        clearTimeout(timeout); request.signal?.removeEventListener("abort",abort); await agent.destroy();
     }
-
-    const errors: string[] = [];
-
-    // 密码字段形如 sk- / 令牌且没填账号：直接走令牌/计费通道，跳过登录
-    const looksLikeKey = /^sk-|^[A-Za-z0-9_-]{32,}$/.test(password);
-    const tryLoginFirst = Boolean(username) && !looksLikeKey;
-
-    if (tryLoginFirst) {
-        const r = await tryPasswordLogin(origin, username, password);
-        if (r.ok) return NextResponse.json(r);
-        errors.push(`账密登录：${r.error}`);
-    }
-
-    // 令牌通道：优先用密码字段；没填密码时若账号字段像令牌也试它
-    const tokenCandidate = password || username;
-    if (tokenCandidate) {
-        const r = await tryAccessToken(origin, tokenCandidate);
-        if (r.ok) return NextResponse.json(r);
-        errors.push(`访问令牌：${r.error}`);
-    }
-
-    // OpenAI 计费通道：同样需要类 key 的凭据
-    if (tokenCandidate) {
-        const r = await tryOpenAIBilling(origin, tokenCandidate);
-        if (r.ok) return NextResponse.json(r);
-        errors.push(`OpenAI 计费接口：${r.error}`);
-    }
-
-    return NextResponse.json({
-        ok: false,
-        error: `三条查询通道都失败了（${errors.join("；")}）。请确认填的是登录账密，或站点「个人设置」里的系统访问令牌。`,
-    });
 }
