@@ -8,16 +8,18 @@ import type { Character } from "@/lib/character-types";
 import type { MusicTrack } from "@/lib/music-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import {
-    askCompanion, clearCompanionError, companionCharacterIssue, companionDuration, companionReplyDelaySeconds, DEFAULT_COMPANION_TRANSLATION_COLORS,
+    askCompanion, clearCompanionError, companionCharacterIssue, companionDuration, companionReplyDelaySeconds,
     finishCompanion, getCompanionServerState, getCompanionState, initializeCompanion,
-    saveCompanionDraft, setCompanionMode, setCompanionPanelOpen, setCompanionTranslationAlwaysVisible, setCompanionTranslationColors, startCompanion, subscribeCompanion, tickCompanion,
-    setCompanionTranslationOutline, setCompanionRoomTitle, setCompanionReplyInterval, summarizeCompanionRecord,
-    queueCompanionMessage, noteCompanionInput, releaseCompanionInput, setCompanionWaitSeconds,
+    saveCompanionDraft, setCompanionMode, setCompanionPanelOpen, startCompanion, subscribeCompanion, tickCompanion,
+    setCompanionRoomTitle, setCompanionReplyInterval, summarizeCompanionRecord,
+    queueCompanionMessage, noteCompanionInput, releaseCompanionInput,
     isCompanionConnected, cancelCompanionInvitation, retryCompanionInvitation,
     type CompanionMessage, type CompanionMode, type CompanionRecord,
 } from "@/lib/music-companion";
 import { companionMessagePreview, splitCompanionText, type CompanionTextPart } from "@/lib/music-companion-messages";
 import CompanionReplyActions from "./music-companion-message-actions";
+import { CompanionComposerTools, CompanionMusicActionPrompt } from "./music-companion-controls";
+import { syncCompanionMusicAction } from "@/lib/music-companion";
 
 const SHARE_EVENT = "music-companion-share-lyric";
 const RECORDS_EVENT = "music-companion-open-records";
@@ -37,6 +39,11 @@ export function MusicCompanionRuntime() {
     playerRef.current = player;
     const sessionId = isCompanionConnected(snapshot.session) ? snapshot.session?.id : undefined;
     const mode = snapshot.session?.mode;
+    useEffect(() => {
+        if (!sessionId) return;
+        const timer = setInterval(syncCompanionMusicAction, 1000);
+        return () => clearInterval(timer);
+    }, [sessionId]);
     useEffect(() => {
         void initializeCompanion();
         window.addEventListener("pagehide", saveCompanionDraft);
@@ -162,11 +169,6 @@ export default function MusicCompanion({ track, currentTime, isPlaying, onToggle
     const { session, busy, error } = snapshot;
     const connected = isCompanionConnected(session);
     const translationStyle = { "--mc-translation-color": snapshot.translationColors.text, "--mc-translation-outline": snapshot.translationOutlineEnabled ? snapshot.translationColors.outline : "transparent" } as CSSProperties;
-    const [colorsOpen, setColorsOpen] = useState(false);
-    const [waitOpen, setWaitOpen] = useState(false);
-    const [waitDraft, setWaitDraft] = useState(String(snapshot.waitSeconds));
-    useEffect(() => setWaitDraft(String(snapshot.waitSeconds)), [snapshot.waitSeconds, waitOpen]);
-    const colorsId = useId();
     const [sheet, setSheetNow] = useState<Sheet>(null);
     const [motion, setMotion] = useState<"opening" | "closing" | "switch-out" | "switch-in" | null>(null);
     const motionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -242,7 +244,6 @@ export default function MusicCompanion({ track, currentTime, isPlaying, onToggle
     }, [sheet]);
     useEffect(() => {
         setConfirmEnd(false);
-        if (sheet !== "chat") { setColorsOpen(false); setWaitOpen(false); }
     }, [sheet]);
     useEffect(() => {
         if (!sheet) return;
@@ -334,28 +335,10 @@ export default function MusicCompanion({ track, currentTime, isPlaying, onToggle
                         {snapshot.waiting && <div className="mc-waiting" role="status">等你说完，再慢慢回应…</div>}
                         {!session.messages.length && !busy && <p className="mc-empty">可以聊聊这首歌，也可以在歌词页分享一句给 TA。</p>}
                     </div>
+                    <CompanionMusicActionPrompt />
                     {error && <div className="mc-error" role="status"><span>{error}</span><button onClick={() => void askCompanion(track, currentTime)}>重试</button><button onClick={clearCompanionError} aria-label="关闭提示">×</button></div>}
                     <div className="mc-composer-wrap">
-                        <div className="mc-composer-tools">
-                            <button type="button" className="mc-translation-toggle" role="switch" aria-checked={snapshot.translationAlwaysVisible}
-                                onClick={() => setCompanionTranslationAlwaysVisible(!snapshot.translationAlwaysVisible)}>
-                                <span>翻译常显</span><span className="mc-translation-switch" aria-hidden="true" />
-                            </button>
-                            <button type="button" className="mc-color-button mc-wait-button" aria-expanded={waitOpen} onClick={() => { setWaitOpen(value => !value); setColorsOpen(false); }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg><span>等待 {snapshot.waitSeconds}秒</span></button>
-                            <button type="button" className="mc-color-button" aria-expanded={colorsOpen} aria-controls={colorsId} onClick={() => { setColorsOpen(value => !value); setWaitOpen(false); }}>
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1.4-3.4l-.3-.3A1.9 1.9 0 0 1 15.5 14H17a4 4 0 0 0 4-4c0-4-4-7-9-7Z" /><circle cx="7.5" cy="10" r=".8" /><circle cx="11" cy="6.5" r=".8" /><circle cx="16" cy="8" r=".8" /></svg>
-                                <span>译文颜色</span>
-                            </button>
-                        </div>
-                        {waitOpen && <div className="mc-wait-settings" role="group" aria-label="回复等待时间"><label htmlFor={`${colorsId}-wait`}>回复等待</label><div><button type="button" aria-label="减少等待时间" disabled={snapshot.waitSeconds <= 0} onClick={() => setCompanionWaitSeconds(snapshot.waitSeconds - 1)}>−</button><input id={`${colorsId}-wait`} type="number" min={0} max={60} step={1} aria-label="回复等待秒数" value={waitDraft} onBlur={() => setWaitDraft(String(getCompanionState().waitSeconds))} onChange={event => { setWaitDraft(event.target.value); if (Number.isFinite(event.target.valueAsNumber)) setCompanionWaitSeconds(event.target.valueAsNumber); }} /><span>秒</span><button type="button" aria-label="增加等待时间" disabled={snapshot.waitSeconds >= 60} onClick={() => setCompanionWaitSeconds(snapshot.waitSeconds + 1)}>＋</button></div><small>停止输入后开始计时，0秒为立即回复。</small></div>}
-                        {colorsOpen && <div id={colorsId} className="mc-color-panel" role="group" aria-label="译文颜色设置" style={translationStyle}>
-                            <button type="button" className="mc-translation-toggle mc-outline-toggle" role="switch" aria-label="译文描边" aria-checked={snapshot.translationOutlineEnabled} onClick={() => setCompanionTranslationOutline(!snapshot.translationOutlineEnabled)}><span>译文描边</span><span className="mc-translation-switch" aria-hidden="true" /></button>
-                            <div className="mc-color-fields">
-                                <label><span>文字</span><input type="color" aria-label="译文文字颜色" value={snapshot.translationColors.text} onChange={event => setCompanionTranslationColors({ text: event.target.value })} /><small>{snapshot.translationColors.text.toUpperCase()}</small></label>
-                                <label data-disabled={!snapshot.translationOutlineEnabled || undefined}><span>描边</span><input type="color" aria-label="译文描边颜色" disabled={!snapshot.translationOutlineEnabled} value={snapshot.translationColors.outline} onChange={event => setCompanionTranslationColors({ outline: event.target.value })} /><small>{snapshot.translationColors.outline.toUpperCase()}</small></label>
-                            </div>
-                            <div className="mc-color-preview-row"><span className="mc-color-preview">这是译文的样子</span><button type="button" onClick={() => setCompanionTranslationColors(DEFAULT_COMPANION_TRANSLATION_COLORS)}>恢复默认</button></div>
-                        </div>}
+                        <CompanionComposerTools />
                         {quote && <div className="mc-quote-draft"><span>分享歌词<q>{quote}</q></span><button onClick={() => setQuote("")} aria-label="取消分享歌词">×</button></div>}
                         <form className="mc-composer" onSubmit={event => { event.preventDefault(); send(); }}><input ref={composer} value={draft} maxLength={500} onChange={event => { setDraft(event.target.value); noteCompanionInput((event.nativeEvent as InputEvent).isComposing); }} onCompositionStart={() => noteCompanionInput(true)} onCompositionEnd={() => noteCompanionInput(false)} onBlur={releaseCompanionInput} onKeyDown={event => { if (event.key === "Enter" && event.nativeEvent.isComposing) event.preventDefault(); }} placeholder={quote ? "这句歌词，让你想到了什么？" : `和 ${session.name} 说点什么…`} aria-label="陪听聊天内容" /><button type="submit" disabled={!draft.trim() && !quote} aria-label="发送陪听消息">↑</button></form>
                         <small className="mc-footer-hint">收起只隐藏聊天 · 音乐和陪伴继续</small>

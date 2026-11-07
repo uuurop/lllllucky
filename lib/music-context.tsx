@@ -7,6 +7,8 @@ import { getAudioBlob, markTrackPlayed } from "./music-storage";
 import { findPlayableMatch, getNeteaseLyrics, getNeteasePlayUrl, getNeteasePlayInfo, getNeteaseSongDetail } from "./music-service";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { registerMusicControlBridge } from "./music-control-bridge";
+import { resolveCompanionPlayback } from "./music-companion-playback";
+import type { CompanionMusicAction } from "./music-companion-actions";
 
 // ── Types ──
 
@@ -105,6 +107,10 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     const [volume, setVolumeState] = useState(0.8);
     const [showFullPlayer, setShowFullPlayer] = useState(false);
     const [floatDismissed, setFloatDismissed] = useState(false);
+    const playbackRevision = useRef(0);
+    const trackStartedAt = useRef(0);
+    const playbackSnapshot = useRef({ currentTrack, isPlaying, currentTime, duration, playMode, queue, volume });
+    playbackSnapshot.current = { currentTrack, isPlaying, currentTime, duration, playMode, queue, volume };
 
     // Persist queue on change.
     useEffect(() => {
@@ -188,6 +194,8 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     }, []);
 
     const loadAndPlay = useCallback(async (track: MusicTrack) => {
+        playbackRevision.current++;
+        trackStartedAt.current = Date.now();
         const audio = audioRef.current;
         if (!audio) return;
 
@@ -229,6 +237,8 @@ export function MusicProvider({ children }: { children: ReactNode }) {
 
     /** Play from a direct URL (for online streaming) */
     const playUrl = useCallback((url: string, track: MusicTrack) => {
+        playbackRevision.current++;
+        trackStartedAt.current = Date.now();
         const audio = audioRef.current;
         if (!audio) return;
         setFloatDismissed(false);
@@ -241,14 +251,17 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     }, [cleanupBlobUrl]);
 
     const pause = useCallback(() => {
+        playbackRevision.current++;
         audioRef.current?.pause();
     }, []);
 
     const resume = useCallback(() => {
+        playbackRevision.current++;
         audioRef.current?.play().catch(() => {});
     }, []);
 
     const togglePlay = useCallback(() => {
+        playbackRevision.current++;
         const audio = audioRef.current;
         if (!audio) return;
         if (audio.paused) audio.play().catch(() => {});
@@ -286,6 +299,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     }, [queue, currentTrack, playMode, loadAndPlay]);
 
     const seek = useCallback((time: number) => {
+        playbackRevision.current++;
         const audio = audioRef.current;
         const maxDuration = Number.isFinite(audio?.duration) && audio!.duration > 0
             ? audio!.duration
@@ -302,6 +316,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     }, []);
 
     const stop = useCallback(() => {
+        playbackRevision.current++;
         const audio = audioRef.current;
         if (audio) {
             audio.pause();
@@ -390,6 +405,44 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         return { ok: false, message: "没有找到可播放的音乐" };
     }, [playResolvedTrack, playUrl]);
 
+    const switchForCompanion = useCallback(async (action: CompanionMusicAction, valid: () => boolean, stillAllowed: () => boolean = () => true) => {
+        try {
+            const before = playbackRevision.current;
+            const canCommit = () => valid() && before === playbackRevision.current;
+            const resolved = await resolveCompanionPlayback(action, playbackSnapshot.current, canCommit);
+            const audio = audioRef.current;
+            if (!audio || !canCommit()) return { ok: false, message: "播放状态已变化，切歌请求已取消。" };
+            const ownRevision = ++playbackRevision.current;
+            trackStartedAt.current = Date.now();
+            cleanupBlobUrl();
+            audio.pause();
+            const url = typeof resolved.source === "string" ? resolved.source : URL.createObjectURL(resolved.source);
+            if (typeof resolved.source !== "string") blobUrlRef.current = url;
+            audio.src = url;
+            setCurrentTrack(resolved.track);
+            setCurrentTime(0);
+            setFloatDismissed(false);
+            // play() can remain pending while audio loads. Cancel only this operation's audio,
+            // never a newer manual selection, when permission/session/timeout invalidates it.
+            let watcher: ReturnType<typeof setInterval> | undefined;
+            try {
+                await Promise.race([audio.play(), new Promise<never>((_, reject) => {
+                    watcher = setInterval(() => {
+                        if (!stillAllowed() || ownRevision !== playbackRevision.current) {
+                            if (ownRevision === playbackRevision.current) audio.pause();
+                            reject(new Error("切歌请求已取消。"));
+                        }
+                    }, 100);
+                })]);
+            } finally { clearInterval(watcher); }
+            if (ownRevision !== playbackRevision.current || audio.paused) return { ok: false, message: "播放已被其他操作打断。" };
+            setQueueRaw(previous => previous.some(item => item.id === resolved.track.id) ? previous : [resolved.track, ...previous].slice(0, QUEUE_MAX_SIZE));
+            return { ok: true, message: `已切换到《${resolved.track.title}》`, track: resolved.track };
+        } catch (error) {
+            return { ok: false, message: error && typeof error === "object" && "name" in error && error.name === "NotAllowedError" ? "浏览器阻止了自动播放，请点击播放器的播放按钮。" : error instanceof Error ? error.message : "切歌失败，请稍后重试。" };
+        }
+    }, [cleanupBlobUrl]);
+
     const addToQueue = useCallback(async (
         tracksToAdd: MusicTrack[],
         options?: { replace?: boolean; playFirst?: boolean },
@@ -421,7 +474,10 @@ export function MusicProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         registerMusicControlBridge({
+            switchForCompanion,
             getState: () => ({
+                revision: playbackRevision.current,
+                trackStartedAt: trackStartedAt.current,
                 currentTrack,
                 isPlaying,
                 currentTime,
@@ -443,7 +499,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         return () => registerMusicControlBridge(null);
     }, [
         currentTrack, isPlaying, currentTime, duration, playMode, queue, volume,
-        playResolvedTrack, playByQuery, addToQueue, pause, resume, stop, next, prev, setPlayMode,
+        playResolvedTrack, playByQuery, switchForCompanion, addToQueue, pause, resume, stop, next, prev, setPlayMode,
     ]);
 
     const controlsValue = useMemo<MusicControlsValue>(() => ({
